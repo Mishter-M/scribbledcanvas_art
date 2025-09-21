@@ -165,32 +165,32 @@ const AdminDashboard: React.FC = () => {
                 cursor: 'pointer',
                 transition: 'all 0.3s ease'
               }}
-            >
-              View Site
-            </button>
-            <button
-              onClick={logout}
-              style={{
-                background: 'rgba(255, 215, 0, 0.1)',
-                color: '#ffd700',
-                border: '1px solid rgba(255, 215, 0, 0.3)',
-                padding: '0.5rem 1rem',
-                borderRadius: '20px',
-                fontSize: '0.9rem',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease'
-              }}
-            >
-              Logout
-            </button>
+              >
+                View Site
+              </button>
+              <button
+                onClick={logout}
+                style={{
+                  background: 'linear-gradient(45deg, #ffd700, #ffb347)',  /* Gold gradient button */
+                  color: '#000000',
+                  border: 'none',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '20px',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease'
+                }}
+                >
+                Logout
+              </button>
           </div>
         </div>
       </header>
 
       {/* Tab Navigation */}
       <nav style={{
-        background: 'rgba(255, 215, 0, 0.02)',
-        borderBottom: '1px solid rgba(255, 215, 0, 0.1)',
+        background: '#1a1a1a',  /* Dark background for tabs */
+        borderBottom: '1px solid #ffd700',  /* Gold border bottom */
         padding: '0 2rem'
       }}>
         <div style={{
@@ -207,14 +207,14 @@ const AdminDashboard: React.FC = () => {
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               style={{
-                background: activeTab === tab.id ? 'rgba(255, 215, 0, 0.2)' : 'transparent',
-                color: activeTab === tab.id ? '#ffd700' : 'rgba(255, 215, 0, 0.7)',
-                border: 'none',
+                background: activeTab === tab.id ? 'linear-gradient(45deg, #ffd700, #ffb347)' : 'transparent',
+                color: activeTab === tab.id ? '#000000' : '#ffd700',
+                border: activeTab === tab.id ? 'none' : 'none',
                 padding: '1rem 2rem',
                 fontSize: '1rem',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                borderBottom: activeTab === tab.id ? '2px solid #ffd700' : '2px solid transparent'
+                borderBottom: activeTab === tab.id ? '2px solid #ffb347' : '2px solid transparent'
               }}
             >
               {tab.icon} {tab.label}

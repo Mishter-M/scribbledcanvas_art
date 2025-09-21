@@ -29,9 +29,10 @@ const THEME_COLORS = {
 
 interface EditableHomepageSectionProps {
   onContentChange?: (content: HomepageContent) => void;
+  showEditButton?: boolean; // Add optional showEditButton prop to control display of the edit button
 }
 
-const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onContentChange }) => {
+const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onContentChange, showEditButton = true }) => {
   const [content, setContent] = useState<HomepageContent>(defaultContent);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState<HomepageContent>(defaultContent);
@@ -133,7 +134,7 @@ const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onCon
       }} />
 
       {/* Edit button for authorized users */}
-      {canEdit && checkPermission('edit_homepage') && (
+      {canEdit && checkPermission('edit_homepage') && showEditButton && (
         <button
           onClick={() => setIsEditing(true)}
           style={{

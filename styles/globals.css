@@ -21,16 +21,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #001d3d;
+  background: #1a1a1a;  /* Dark gray track for unified theme */
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(45deg, #ff0080, #00f5ff);
+  background: linear-gradient(45deg, #ffd700, #ffb347);  /* Golden thumb */
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(45deg, #ff4081, #00ff80);
+  background: linear-gradient(45deg, #ffb347, #daa520);  /* Darker gold on hover */
 }
 
 /* Input focus styles */

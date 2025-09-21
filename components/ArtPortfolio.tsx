@@ -136,7 +136,7 @@ const ArtPortfolio: React.FC = () => {
               position: 'relative',
               zIndex: 10
             }}>
-              <EditableHomepageSection />
+              <EditableHomepageSection showEditButton={false} />
             </div>
 
             {/* Features Section */}

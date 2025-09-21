@@ -68,6 +68,7 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
   const [isEditing, setIsEditing] = useState(false);
   const [editingArtwork, setEditingArtwork] = useState<Artwork | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
+  const [selectedArtwork, setSelectedArtwork] = useState<Artwork | null>(null);
   const { canEdit, checkPermission } = useAdmin();
 
   // Load artworks from localStorage on mount
@@ -204,7 +205,7 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
             <button
               onClick={handleAddArtwork}
               style={{
-                background: 'linear-gradient(45deg, #ffd700, #daa520)',
+                background: 'linear-gradient(45deg, #ffd700, #ffb347)',  /* Gold button */
                 color: '#000000',
                 border: 'none',
                 padding: '1rem 2rem',
@@ -218,9 +219,11 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
               }}
               onMouseOver={(e) => {
                 e.currentTarget.style.transform = 'translateY(-3px)';
+                e.currentTarget.style.background = 'linear-gradient(45deg, #ffb347, #daa520)';  /* darker on hover */
               }}
               onMouseOut={(e) => {
                 e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.background = 'linear-gradient(45deg, #ffd700, #ffb347)';
               }}
             >
               ➕ Add Artwork
@@ -237,6 +240,7 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
           {artworks.map((artwork, index) => (
             <div
               key={artwork.id}
+              onClick={() => setSelectedArtwork(artwork)}
               style={{
                 background: 'rgba(255, 255, 255, 0.05)',
                 backdropFilter: 'blur(30px)',
@@ -265,7 +269,7 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
                   position: 'absolute',
                   top: '1rem',
                   right: '1rem',
-                  background: 'linear-gradient(45deg, #FFD700, #FFA500)',
+                  background: 'linear-gradient(45deg, #ffd700, #ffb347)',  /* Gold badge */
                   color: '#000',
                   padding: '0.3rem 0.8rem',
                   borderRadius: '20px',
@@ -724,6 +728,40 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
                 {isAddingNew ? 'Add' : 'Save'} Artwork
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for artwork details */}
+      {selectedArtwork && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}
+          onClick={() => setSelectedArtwork(null)}
+        >
+          <div
+            style={{ position: 'relative', background: '#000000', padding: '2rem', borderRadius: '10px', maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setSelectedArtwork(null)}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'transparent', color: '#ffd700', fontSize: '1.5rem', border: 'none', cursor: 'pointer' }}
+            >
+              ×
+            </button>
+            <img
+              src={selectedArtwork.imageUrl}
+              alt={selectedArtwork.title}
+              style={{ width: '100%', borderRadius: '5px' }}
+            />
+            <h3 style={{ color: '#ffd700', marginTop: '1rem' }}>
+              {selectedArtwork.title} ({selectedArtwork.year})
+            </h3>
+            <p style={{ color: '#ffffff' }}>
+              {selectedArtwork.medium} - {selectedArtwork.dimensions}
+            </p>
+            <p style={{ color: 'rgba(255,255,255,0.8)', marginTop: '1rem' }}>
+              {selectedArtwork.description}
+            </p>
           </div>
         </div>
       )}
