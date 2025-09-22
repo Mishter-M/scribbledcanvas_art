@@ -36,7 +36,6 @@ jobs:
       - name: Build and Export Static Site
         run: |
           npm run build
-          npm run export
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -52,14 +51,61 @@ jobs:
 
       - name: Empty versioned S3 buckets
         run: |
-          for BUCKET in ${STACK_NAME}-website ${STACK_NAME}-artwork; do
-            aws s3api list-object-versions --bucket $BUCKET \
-              --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > v.json
-            aws s3api delete-objects --bucket $BUCKET --delete file://v.json || true
-            aws s3api list-object-versions --bucket $BUCKET \
-              --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > m.json
-            aws s3api delete-objects --bucket $BUCKET --delete file://m.json || true
+          for BUCKET_NAME in "${STACK_NAME}-website" "${STACK_NAME}-artwork"; do
+            echo "Cleaning bucket: $BUCKET_NAME"
+            if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+              # Delete all object versions
+              VERSIONS=$(aws s3api list-object-versions --bucket "$BUCKET_NAME" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null || echo "[]")
+              if [ "$VERSIONS" != "[]" ] && [ "$VERSIONS" != "null" ] && [ -n "$VERSIONS" ]; then
+                echo "$VERSIONS" > /tmp/delete-versions.json
+                aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-versions.json || true
+              fi
+              # Delete all delete markers
+              MARKERS=$(aws s3api list-object-versions --bucket "$BUCKET_NAME" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null || echo "[]")
+              if [ "$MARKERS" != "[]" ] && [ "$MARKERS" != "null" ] && [ -n "$MARKERS" ]; then
+                echo "$MARKERS" > /tmp/delete-markers.json
+                aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-markers.json || true
+              fi
+              # Remove any remaining objects
+              aws s3 rm "s3://$BUCKET_NAME" --recursive 2>/dev/null || true
+              echo "Bucket $BUCKET_NAME cleaned successfully"
+            else
+              echo "Bucket $BUCKET_NAME does not exist, skipping cleanup"
+            fi
           done
 
       - name: Deploy to AWS
-        run: bash scripts/deploy.sh
+        run: |
+          # Deploy CloudFormation stack
+          aws cloudformation deploy \
+            --template-file aws/cloudformation-template.yaml \
+            --stack-name $STACK_NAME \
+            --parameter-overrides \
+                ProjectName=artforge-portfolio \
+                Environment=prod \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region $AWS_REGION
+
+          # Get stack outputs
+          WEBSITE_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' \
+            --output text \
+            --region $AWS_REGION)
+
+          CLOUDFRONT_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text \
+            --region $AWS_REGION)
+
+          # Upload website files to S3
+          aws s3 sync out/ s3://$WEBSITE_BUCKET --delete --region $AWS_REGION
+
+          # Invalidate CloudFront cache
+          aws cloudfront create-invalidation \
+            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+            --paths "/*" \
+            --region $AWS_REGION
+
+          echo "Deployment completed successfully!"
