@@ -188,8 +188,6 @@ EOF
 # Build and export static site using updated environment variables
 print_status "Building the project..."
 npm run build
-print_status "Exporting static site..."
-npm run export
 
 # Print deployment summary
 echo ""
