@@ -1,0 +1,132 @@
+{
+    "Objects": [
+        {
+            "Key": "404.html",
+            "VersionId": "FskgKN6RX7KDzOeJ7rjSL6tJBDj8lLuJ"
+        },
+        {
+            "Key": "404.html",
+            "VersionId": "kAZTGF2_ZLyOkroMHpbvFu1EGpr5UXec"
+        },
+        {
+            "Key": "404/index.html",
+            "VersionId": "47WfpeJZcOLJkfuATYjcCkdEt5gTPlc2"
+        },
+        {
+            "Key": "404/index.html",
+            "VersionId": "jE77Cw6aSfY_6YBHA0bpuRnIa9FFGQOB"
+        },
+        {
+            "Key": "_next/static/VqiAU70C3I2jsprVVKt7K/_buildManifest.js",
+            "VersionId": "dPNGCyyJldJ0G62BdjWWkkO_boCTnqqf"
+        },
+        {
+            "Key": "_next/static/VqiAU70C3I2jsprVVKt7K/_ssgManifest.js",
+            "VersionId": "QtFsRy97IwShUAEqQ5ysxYADpfD6reKj"
+        },
+        {
+            "Key": "_next/static/chunks/929-61a993dd859ca92e.js",
+            "VersionId": "yBxv6Uac_UkpB8N9ZbW3wc3.SbpMxFvg"
+        },
+        {
+            "Key": "_next/static/chunks/929-61a993dd859ca92e.js",
+            "VersionId": "fdvdCyaMHLAMFO72V4ViIV7cEiaZz3J."
+        },
+        {
+            "Key": "_next/static/chunks/framework-64ad27b21261a9ce.js",
+            "VersionId": "IvE66kRzSc5u5AK3RU21cM7J.Ansajkv"
+        },
+        {
+            "Key": "_next/static/chunks/framework-64ad27b21261a9ce.js",
+            "VersionId": "l.DqvkmBB1xNsor78nMm201jyoLjY8ET"
+        },
+        {
+            "Key": "_next/static/chunks/main-6ec3f7584970eebe.js",
+            "VersionId": "eQmrFhw7kT9MdYnYAfo_8pr6U3rbSEvR"
+        },
+        {
+            "Key": "_next/static/chunks/main-6ec3f7584970eebe.js",
+            "VersionId": "URie7ckH8dhObSOs4o.OyEzeo5Q_zakL"
+        },
+        {
+            "Key": "_next/static/chunks/pages/_app-ab050d6e839186df.js",
+            "VersionId": "88w.c7pTjxx2GuGsHAKuEP.3tbBtbleu"
+        },
+        {
+            "Key": "_next/static/chunks/pages/_app-ab050d6e839186df.js",
+            "VersionId": "7akr_VkwPCUX9fpIp_0IE.dM5e.pIep_"
+        },
+        {
+            "Key": "_next/static/chunks/pages/_error-7a92967bea80186d.js",
+            "VersionId": "q_Ka3MxyIwbQNYVwRgKJkEPLfnQnS4AC"
+        },
+        {
+            "Key": "_next/static/chunks/pages/_error-7a92967bea80186d.js",
+            "VersionId": "_rMAvFs2BF0PED9lRlGCq8amFHehS7sz"
+        },
+        {
+            "Key": "_next/static/chunks/pages/admin-74a74b72ad9c65c2.js",
+            "VersionId": "TiuObjedNcNjlDxwe.ClH9TQgwcflCDH"
+        },
+        {
+            "Key": "_next/static/chunks/pages/admin-74a74b72ad9c65c2.js",
+            "VersionId": "7NP15i.jOXdPbRavQJ2Wpv4.oxNxHtOx"
+        },
+        {
+            "Key": "_next/static/chunks/pages/index-b0e9b711f0300e25.js",
+            "VersionId": "N7eUFSeLvMtLwKpnjNpdLnxhto8V7PA0"
+        },
+        {
+            "Key": "_next/static/chunks/pages/index-b0e9b711f0300e25.js",
+            "VersionId": "d5ncEF9dv2XaFZphTLEDu11cAclxKGvL"
+        },
+        {
+            "Key": "_next/static/chunks/polyfills-42372ed130431b0a.js",
+            "VersionId": "Gn246_.RpLkxW9G.XV319wW.WrcieVT8"
+        },
+        {
+            "Key": "_next/static/chunks/polyfills-42372ed130431b0a.js",
+            "VersionId": "O8PJVaXkmuzIwfKsyxv6DJaAPtyrWzbe"
+        },
+        {
+            "Key": "_next/static/chunks/webpack-8fa1640cc84ba8fe.js",
+            "VersionId": "jdgasXUG0vxV4tgVs4dSRgW7neeGr256"
+        },
+        {
+            "Key": "_next/static/chunks/webpack-8fa1640cc84ba8fe.js",
+            "VersionId": "RUCAYQChH45dJ6ZUVtAnNLKqwQBKysA1"
+        },
+        {
+            "Key": "_next/static/css/b80dcf3485cbb895.css",
+            "VersionId": "5qdjVE1oReb_5Oyczijh5jvc6DPEQpvU"
+        },
+        {
+            "Key": "_next/static/css/b80dcf3485cbb895.css",
+            "VersionId": "k_2aTWKKHZLD3..8HK2ftKcTNcz0ePPG"
+        },
+        {
+            "Key": "_next/static/smKaRFLQW4hr20BtKWSic/_buildManifest.js",
+            "VersionId": "l2oQ0ZXJZ47lBppignG0rBSdRdeweS.y"
+        },
+        {
+            "Key": "_next/static/smKaRFLQW4hr20BtKWSic/_ssgManifest.js",
+            "VersionId": "GGcWzEoCj19FfyYVTM6iB.fHsZwPActg"
+        },
+        {
+            "Key": "admin/index.html",
+            "VersionId": "JkRCvX2o7AGemi0INdF8LDCXg_2Ul9bf"
+        },
+        {
+            "Key": "admin/index.html",
+            "VersionId": "z5X8TzMZn16b7ef7TDHPEflbQvaMYrUp"
+        },
+        {
+            "Key": "index.html",
+            "VersionId": "OnlgGqOxRIVUTa13zOSeL66UK12JusdL"
+        },
+        {
+            "Key": "index.html",
+            "VersionId": "th12lU3fpEUUB7iROydQqdc1dc1VRuGs"
+        }
+    ]
+}
