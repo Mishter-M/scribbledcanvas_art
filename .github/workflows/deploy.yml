@@ -13,6 +13,10 @@ jobs:
   deploy:
     name: Build and Deploy to AWS
     runs-on: ubuntu-latest
+    
+    outputs:
+      deployment-status: ${{ steps.deployment-result.outputs.status }}
+      backup-created: ${{ steps.backup-check.outputs.backup-exists }}
 
     steps:
       - name: Checkout Repository
@@ -44,39 +48,97 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Clean up failed stack
+      - name: Create Backup of Current Deployment
+        id: backup-check
+        run: |
+          echo "=== Creating Backup of Current Deployment ==="
+          BACKUP_BUCKET="${STACK_NAME}-backup-$(date +%Y%m%d-%H%M%S)"
+          WEBSITE_BUCKET="${STACK_NAME}-website"
+          
+          # Check if current deployment exists
+          if aws s3api head-bucket --bucket "$WEBSITE_BUCKET" 2>/dev/null; then
+            echo "Current deployment found, creating backup..."
+            
+            # Create backup bucket
+            aws s3 mb "s3://$BACKUP_BUCKET" --region $AWS_REGION
+            
+            # Copy current website to backup
+            aws s3 sync "s3://$WEBSITE_BUCKET" "s3://$BACKUP_BUCKET" --region $AWS_REGION
+            
+            # Store backup info
+            echo "$BACKUP_BUCKET" > /tmp/backup-bucket-name
+            echo "backup-exists=true" >> $GITHUB_OUTPUT
+            echo "backup-bucket=$BACKUP_BUCKET" >> $GITHUB_OUTPUT
+            
+            # Store current CloudFormation template
+            aws cloudformation get-template --stack-name $STACK_NAME \
+              --query 'TemplateBody' --output json > /tmp/current-template.json || echo "{}" > /tmp/current-template.json
+            
+            echo "✅ Backup created: $BACKUP_BUCKET"
+          else
+            echo "⚠️  No current deployment found, skipping backup"
+            echo "backup-exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Empty versioned S3 buckets before cleanup
+        run: |
+          # Define the bucket names based on the stack naming convention
+          PROJECT_NAME="artforge-portfolio"
+          ENVIRONMENT="prod"
+          
+          for BUCKET_TYPE in "website" "artwork"; do
+            BUCKET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-${BUCKET_TYPE}"
+            echo "=== Cleaning bucket: $BUCKET_NAME ==="
+            
+            if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+              echo "Bucket exists, proceeding with cleanup..."
+              
+              # First, list and delete all object versions
+              echo "Deleting object versions..."
+              aws s3api list-object-versions --bucket "$BUCKET_NAME" \
+                --output json --query 'Versions[].[Key,VersionId]' \
+                | jq -r '.[] | @tsv' | while IFS=$'\t' read -r key version_id; do
+                  if [ -n "$key" ] && [ -n "$version_id" ]; then
+                    echo "Deleting version: $key ($version_id)"
+                    aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" --version-id "$version_id" || true
+                  fi
+                done
+              
+              # Then, list and delete all delete markers
+              echo "Deleting delete markers..."
+              aws s3api list-object-versions --bucket "$BUCKET_NAME" \
+                --output json --query 'DeleteMarkers[].[Key,VersionId]' \
+                | jq -r '.[] | @tsv' | while IFS=$'\t' read -r key version_id; do
+                  if [ -n "$key" ] && [ -n "$version_id" ]; then
+                    echo "Deleting delete marker: $key ($version_id)"
+                    aws s3api delete-object --bucket "$BUCKET_NAME" --key "$key" --version-id "$version_id" || true
+                  fi
+                done
+              
+              # Finally, delete any remaining current objects
+              echo "Deleting current objects..."
+              aws s3 rm "s3://$BUCKET_NAME" --recursive || true
+              
+              echo "✅ Bucket $BUCKET_NAME cleaned successfully"
+            else
+              echo "⚠️  Bucket $BUCKET_NAME does not exist, skipping cleanup"
+            fi
+          done
+
+      - name: Clean up failed stack after bucket cleanup
         run: |
           aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION || true
           aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || true
 
-      - name: Empty versioned S3 buckets
-        run: |
-          for BUCKET_NAME in "${STACK_NAME}-website" "${STACK_NAME}-artwork"; do
-            echo "Cleaning bucket: $BUCKET_NAME"
-            if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-              # Delete all object versions
-              VERSIONS=$(aws s3api list-object-versions --bucket "$BUCKET_NAME" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null || echo "[]")
-              if [ "$VERSIONS" != "[]" ] && [ "$VERSIONS" != "null" ] && [ -n "$VERSIONS" ]; then
-                echo "$VERSIONS" > /tmp/delete-versions.json
-                aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-versions.json || true
-              fi
-              # Delete all delete markers
-              MARKERS=$(aws s3api list-object-versions --bucket "$BUCKET_NAME" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null || echo "[]")
-              if [ "$MARKERS" != "[]" ] && [ "$MARKERS" != "null" ] && [ -n "$MARKERS" ]; then
-                echo "$MARKERS" > /tmp/delete-markers.json
-                aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-markers.json || true
-              fi
-              # Remove any remaining objects
-              aws s3 rm "s3://$BUCKET_NAME" --recursive 2>/dev/null || true
-              echo "Bucket $BUCKET_NAME cleaned successfully"
-            else
-              echo "Bucket $BUCKET_NAME does not exist, skipping cleanup"
-            fi
-          done
-
       - name: Deploy to AWS
+        id: deployment-result
+        continue-on-error: true
         run: |
+          echo "=== Starting AWS Deployment ==="
+          set -e  # Exit on any error
+          
           # Deploy CloudFormation stack
+          echo "Deploying CloudFormation stack..."
           aws cloudformation deploy \
             --template-file aws/cloudformation-template.yaml \
             --stack-name $STACK_NAME \
@@ -87,6 +149,7 @@ jobs:
             --region $AWS_REGION
 
           # Get stack outputs
+          echo "Getting stack outputs..."
           WEBSITE_BUCKET=$(aws cloudformation describe-stacks \
             --stack-name $STACK_NAME \
             --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' \
@@ -100,12 +163,94 @@ jobs:
             --region $AWS_REGION)
 
           # Upload website files to S3
+          echo "Uploading website files to S3..."
           aws s3 sync out/ s3://$WEBSITE_BUCKET --delete --region $AWS_REGION
 
           # Invalidate CloudFront cache
+          echo "Invalidating CloudFront cache..."
           aws cloudfront create-invalidation \
             --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
             --paths "/*" \
             --region $AWS_REGION
 
-          echo "Deployment completed successfully!"
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ Deployment completed successfully!"
+
+      - name: Rollback on Deployment Failure
+        if: steps.deployment-result.outcome == 'failure' && steps.backup-check.outputs.backup-exists == 'true'
+        run: |
+          echo "=== 🚨 DEPLOYMENT FAILED - INITIATING ROLLBACK ==="
+          
+          BACKUP_BUCKET=$(cat /tmp/backup-bucket-name)
+          WEBSITE_BUCKET="${STACK_NAME}-website"
+          
+          echo "Rolling back to backup: $BACKUP_BUCKET"
+          
+          # Clean current failed deployment
+          echo "Cleaning failed deployment..."
+          aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION || true
+          aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || true
+          
+          # Restore from backup template
+          echo "Restoring CloudFormation stack from backup..."
+          if [ -f /tmp/current-template.json ] && [ "$(cat /tmp/current-template.json)" != "{}" ]; then
+            aws cloudformation deploy \
+              --template-body file:///tmp/current-template.json \
+              --stack-name $STACK_NAME \
+              --parameter-overrides \
+                  ProjectName=artforge-portfolio \
+                  Environment=prod \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region $AWS_REGION
+          fi
+          
+          # Restore website content
+          echo "Restoring website content from backup..."
+          if aws s3api head-bucket --bucket "$WEBSITE_BUCKET" 2>/dev/null; then
+            aws s3 sync "s3://$BACKUP_BUCKET" "s3://$WEBSITE_BUCKET" --delete --region $AWS_REGION
+            
+            # Invalidate CloudFront cache after rollback
+            CLOUDFRONT_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+              --stack-name $STACK_NAME \
+              --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+              --output text \
+              --region $AWS_REGION || echo "")
+            
+            if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+              aws cloudfront create-invalidation \
+                --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+                --paths "/*" \
+                --region $AWS_REGION
+            fi
+          fi
+          
+          echo "🔄 Rollback completed successfully!"
+          exit 1  # Still fail the workflow to indicate deployment issues
+
+      - name: Cleanup Backup on Success
+        if: steps.deployment-result.outcome == 'success' && steps.backup-check.outputs.backup-exists == 'true'
+        run: |
+          echo "=== Cleaning up backup after successful deployment ==="
+          BACKUP_BUCKET=$(cat /tmp/backup-bucket-name)
+          
+          # Keep backup for a short while, then clean up
+          echo "Scheduling backup cleanup for: $BACKUP_BUCKET"
+          aws s3 rb "s3://$BACKUP_BUCKET" --force --region $AWS_REGION || true
+          echo "✅ Backup cleaned up successfully"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "=== 📊 DEPLOYMENT SUMMARY ==="
+          if [ "${{ steps.deployment-result.outcome }}" == "success" ]; then
+            echo "✅ Status: SUCCESS"
+            echo "🌐 Website URL: https://$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' --output text --region $AWS_REGION 2>/dev/null || echo 'N/A')"
+          else
+            echo "❌ Status: FAILED"
+            if [ "${{ steps.backup-check.outputs.backup-exists }}" == "true" ]; then
+              echo "🔄 Rollback: COMPLETED"
+              echo "📝 Previous version has been restored"
+            else
+              echo "⚠️  Rollback: NOT AVAILABLE (No previous deployment found)"
+            fi
+          fi
