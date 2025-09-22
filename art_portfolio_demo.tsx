@@ -19,7 +19,7 @@ const ArtPortfolio = () => {
   const [artworks, setArtworks] = useState<Artwork[]>([]);
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [currentImageData, setCurrentImageData] = useState(null);
+  const [currentImageData, setCurrentImageData] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -60,8 +60,11 @@ const ArtPortfolio = () => {
     const file = files[0];
 
     const reader = new FileReader();
-    reader.onload = (e) => {
-      setCurrentImageData(e.target.result);
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        setCurrentImageData(result);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -525,6 +528,15 @@ const ArtPortfolio = () => {
                         src={currentImageData}
                         alt="Preview"
                         style={{
+                          width: '100%',
+                          borderRadius: '12px',
+                          marginBottom: '1rem'
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{
                         fontSize: '4rem',
                         marginBottom: '1rem',
                         background: 'linear-gradient(45deg, #ff0080, #8338ec)',
