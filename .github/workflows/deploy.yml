@@ -51,17 +51,60 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Handle Failed Stack State
+        id: stack-cleanup
+        run: |
+          echo "=== Checking Stack State and Cleaning Up if Needed ==="
+          
+          # Check current stack status
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query 'Stacks[0].StackStatus' \
+            --output text \
+            --region $AWS_REGION 2>/dev/null || echo "STACK_NOT_FOUND")
+          
+          echo "Current stack status: $STACK_STATUS"
+          
+          # Handle failed states
+          if [[ "$STACK_STATUS" == "DELETE_FAILED" || "$STACK_STATUS" == "CREATE_FAILED" || "$STACK_STATUS" == "UPDATE_ROLLBACK_FAILED" ]]; then
+            echo "⚠️ Stack is in failed state: $STACK_STATUS"
+            echo "🔧 Forcing stack deletion to enable clean redeployment..."
+            
+            # Force delete the failed stack
+            aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
+            
+            echo "⏳ Waiting for stack deletion to complete..."
+            # Wait for deletion with timeout
+            timeout 600 aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || {
+              echo "⚠️ Stack deletion timed out, but continuing with deployment..."
+            }
+            
+            echo "✅ Stack cleaned up, ready for fresh deployment"
+            echo "stack-cleaned=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Stack state is acceptable: $STACK_STATUS"
+            echo "stack-cleaned=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check for Existing CloudFront Distribution
         id: cloudfront-check
         run: |
           echo "=== Checking for Persistent CloudFront Distribution ==="
           
-          # Try to get the CloudFront distribution from current stack
-          EXISTING_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
-            --stack-name $STACK_NAME \
-            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
-            --output text \
-            --region $AWS_REGION 2>/dev/null || echo "")
+          # Try to get the CloudFront distribution from current stack (if not cleaned up)
+          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "false" ]; then
+            EXISTING_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+              --stack-name $STACK_NAME \
+              --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+              --output text \
+              --region $AWS_REGION 2>/dev/null || echo "")
+          else
+            echo "Stack was cleaned up, checking for orphaned CloudFront distributions..."
+            # Look for any existing CloudFront distributions that might be orphaned
+            EXISTING_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+              --query 'DistributionList.Items[?Comment==`ARTFORGE Portfolio - Static Website`].Id' \
+              --output text 2>/dev/null || echo "")
+          fi
           
           if [ -n "$EXISTING_DISTRIBUTION_ID" ] && [ "$EXISTING_DISTRIBUTION_ID" != "None" ]; then
             echo "Found existing CloudFront distribution: $EXISTING_DISTRIBUTION_ID"
@@ -169,6 +212,17 @@ jobs:
           echo "=== Starting AWS Deployment ==="
           set -e  # Exit on any error
           
+          # Show deployment context
+          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "true" ]; then
+            echo "🔄 Deploying fresh stack after cleanup"
+          else
+            echo "🔄 Updating existing stack"
+          fi
+          
+          if [ "${{ steps.cloudfront-check.outputs.has-existing }}" == "true" ]; then
+            echo "🌐 Persistent CloudFront Distribution: ${{ steps.cloudfront-check.outputs.distribution-id }}"
+          fi
+          
           # Deploy CloudFormation stack
           echo "Deploying CloudFormation stack..."
           aws cloudformation deploy \
@@ -178,7 +232,8 @@ jobs:
                 ProjectName=artforge-portfolio \
                 Environment=prod \
             --capabilities CAPABILITY_NAMED_IAM \
-            --region $AWS_REGION
+            --region $AWS_REGION \
+            --no-fail-on-empty-changeset
 
           # Get stack outputs
           echo "Getting stack outputs..."
