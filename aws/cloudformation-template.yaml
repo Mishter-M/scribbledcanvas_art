@@ -9,11 +9,7 @@ Parameters:
   
   Environment:
     Type: String
-    Default              Resource:
-                - !GetAtt ArtworkTable.Arn
-                - !Sub '${ArtworkTable.Arn}/index/*'
-                - !GetAtt HomepageContentTable.Arn
-                - !Sub '${HomepageContentTable.Arn}/index/*''prod'
+    Default: 'prod'
     AllowedValues: [dev, staging, prod]
     Description: 'Environment name'
   
