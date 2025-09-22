@@ -54,9 +54,10 @@ const ArtPortfolio = () => {
     setArtworks(sampleArtworks);
   }, []);
 
-  const handleImageUpload = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+  const handleImageUpload = (event: any) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -65,14 +66,14 @@ const ArtPortfolio = () => {
     reader.readAsDataURL(file);
   };
 
-  const handleInputChange = (e) => {
+  const handleInputChange = (e: any) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: any) => {
     e.preventDefault();
     if (!currentImageData) {
       alert('Please select an image first!');
@@ -514,7 +515,8 @@ const ArtPortfolio = () => {
                   const input = document.createElement('input');
                   input.type = 'file';
                   input.accept = 'image/*';
-                  input.onchange = handleImageUpload;
+                  // use addEventListener with cast to support DOM Event
+                  input.addEventListener('change', handleImageUpload as EventListener);
                   input.click();
                 }}>
                   {currentImageData ? (
@@ -731,6 +733,7 @@ const ArtPortfolio = () => {
                 </div>
               ) : (
                 <button
+                  type="submit"
                   onClick={handleSubmit}
                   style={{
                     width: '100%',
@@ -757,7 +760,7 @@ const ArtPortfolio = () => {
                 >
                   🚀 Upload to AWS
                 </button>
-              )}
+              }
             </div>
           </div>
         </section>
