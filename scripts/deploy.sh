@@ -56,10 +56,6 @@ print_status "Starting ARTFORGE Portfolio deployment..."
 print_status "Installing dependencies..."
 npm install
 
-# Build the project
-print_status "Building the project..."
-npm run build
-
 # Deploy CloudFormation stack
 print_status "Deploying AWS infrastructure..."
 STACK_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
@@ -133,11 +129,16 @@ print_status "Creating environment configuration..."
 cat > .env.local << EOF
 NEXT_PUBLIC_API_ENDPOINT=$API_ENDPOINT
 NEXT_PUBLIC_AWS_REGION=$AWS_REGION
+AWS_REGION=$AWS_REGION
 AWS_S3_BUCKET=$WEBSITE_BUCKET
 AWS_CLOUDFRONT_DISTRIBUTION_ID=$CLOUDFRONT_DISTRIBUTION_ID
 EOF
 
-print_success "Environment configuration created!"
+# Build and export static site using updated environment variables
+print_status "Building the project..."
+npm run build
+print_status "Exporting static site..."
+npm run export
 
 # Print deployment summary
 echo ""

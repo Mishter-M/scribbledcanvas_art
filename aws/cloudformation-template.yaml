@@ -34,11 +34,6 @@ Resources:
         ErrorDocument: index.html
       VersioningConfiguration:
         Status: Enabled
-      NotificationConfiguration:
-        CloudWatchConfigurations:
-          - Event: s3:ObjectCreated:*
-            CloudWatchConfiguration:
-              LogGroupName: !Ref WebsiteLogGroup
 
   # S3 Bucket for artwork uploads
   ArtworkBucket:
@@ -86,7 +81,7 @@ Resources:
             Effect: Allow
             Principal: '*'
             Action: s3:GetObject
-            Resource: !Sub '${WebsiteBucket}/*'
+            Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}/*'
 
   # CloudFront Origin Access Identity
   CloudFrontOriginAccessIdentity:
@@ -243,7 +238,7 @@ Resources:
                   - s3:DeleteObject
                   - s3:GetObjectVersion
                 Resource:
-                  - !Sub '${ArtworkBucket}/*'
+                  - !Sub 'arn:aws:s3:::${ArtworkBucket}/*'
               - Effect: Allow
                 Action:
                   - s3:ListBucket
