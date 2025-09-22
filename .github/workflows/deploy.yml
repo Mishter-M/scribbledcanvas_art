@@ -56,6 +56,20 @@ jobs:
         run: |
           echo "=== Checking Stack State and Cleaning Up if Needed ==="
           
+          # First, check if there's already a working temporary stack we can use
+          EXISTING_TEMP_STACK=$(aws cloudformation list-stacks \
+            --region $AWS_REGION \
+            --query "StackSummaries[?contains(StackName, '${STACK_NAME}-temp') && StackStatus == 'CREATE_COMPLETE'].StackName" \
+            --output text 2>/dev/null | head -1)
+          
+          if [ -n "$EXISTING_TEMP_STACK" ] && [ "$EXISTING_TEMP_STACK" != "None" ]; then
+            echo "✅ Found existing working temporary stack: $EXISTING_TEMP_STACK"
+            echo "🔄 Will use existing temporary stack instead of creating new one"
+            echo "STACK_NAME=$EXISTING_TEMP_STACK" >> $GITHUB_ENV
+            echo "stack-cleaned=existing-temp" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
           # Check current stack status
           STACK_STATUS=$(aws cloudformation describe-stacks \
             --stack-name $STACK_NAME \
@@ -391,6 +405,33 @@ jobs:
           echo "Scheduling backup cleanup for: $BACKUP_BUCKET"
           aws s3 rb "s3://$BACKUP_BUCKET" --force --region $AWS_REGION || true
           echo "✅ Backup cleaned up successfully"
+
+      - name: Final Stack Cleanup
+        if: steps.deployment-result.outcome == 'success'
+        run: |
+          echo "=== Final Stack Cleanup ==="
+          
+          # If we used an existing temp stack, consider renaming it back to main
+          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "existing-temp" ]; then
+            echo "✅ Successfully updated existing temporary stack: $STACK_NAME"
+            echo "📝 Note: Stack name is temporary but fully functional"
+          fi
+          
+          # Clean up any old failed stacks (but preserve CloudFront resources)
+          OLD_FAILED_STACK="artforge-portfolio-prod"
+          if [ "$STACK_NAME" != "$OLD_FAILED_STACK" ]; then
+            FAILED_STATUS=$(aws cloudformation describe-stacks \
+              --stack-name "$OLD_FAILED_STACK" \
+              --query 'Stacks[0].StackStatus' \
+              --output text \
+              --region $AWS_REGION 2>/dev/null || echo "NOT_FOUND")
+            
+            if [ "$FAILED_STATUS" == "DELETE_FAILED" ]; then
+              echo "🧹 Old failed stack still exists: $OLD_FAILED_STACK"
+              echo "📝 Leaving it in place to preserve CloudFront resources"
+              echo "⚠️  Future deployments will continue using: $STACK_NAME"
+            fi
+          fi
 
       - name: Deployment Summary
         if: always()

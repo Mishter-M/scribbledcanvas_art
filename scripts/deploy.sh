@@ -51,6 +51,7 @@ if ! command -v npm &> /dev/null; then
 fi
 
 print_status "Starting ARTFORGE Portfolio deployment..."
+print_status "Using CloudFormation stack: $STACK_NAME"
 
 # Install dependencies
 print_status "Installing dependencies..."
