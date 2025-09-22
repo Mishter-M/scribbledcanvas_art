@@ -90,9 +90,39 @@ Resources:
       CloudFrontOriginAccessIdentityConfig:
         Comment: !Sub 'OAI for ${ProjectName}'
 
-  # CloudFront Distribution
+  # CloudFront Distribution (Persistent - survives stack deletions)
+  RewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-url-rewrite'
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          
+          // If URI is /admin or /admin/, serve admin/index.html
+          if (uri === '/admin' || uri === '/admin/') {
+            request.uri = '/admin/index.html';
+          }
+          // If URI ends with / and is not root, append index.html
+          else if (uri.endsWith('/') && uri !== '/') {
+            request.uri = uri + 'index.html';
+          }
+          // If URI is a directory (no extension) and not already index.html, append /index.html
+          else if (!uri.includes('.') && !uri.endsWith('index.html')) {
+            request.uri = uri + '/index.html';
+          }
+          
+          return request;
+        }
+      FunctionConfig:
+        Comment: URL rewriting for static site routing
+        Runtime: cloudfront-js-1.0
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       DistributionConfig:
         Aliases: !If [HasDomainName, [!Ref DomainName], []]
@@ -114,6 +144,16 @@ Resources:
           - ErrorCode: 403
             ResponseCode: 200
             ResponsePagePath: /index.html
+        # Additional cache behaviors for proper routing
+        CacheBehaviors:
+          - PathPattern: "/admin*"
+            TargetOriginId: S3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingOptimized
+            OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf # CORS-S3Origin
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt RewriteFunction.FunctionARN
         Enabled: true
         HttpVersion: http2
         PriceClass: PriceClass_100
@@ -458,3 +498,9 @@ Outputs:
     Value: !Ref ArtworkTable
     Export:
       Name: !Sub '${AWS::StackName}-DynamoDBTable'
+
+  RewriteFunctionARN:
+    Description: 'CloudFront Function ARN for URL rewriting'
+    Value: !GetAtt RewriteFunction.FunctionARN
+    Export:
+      Name: !Sub '${AWS::StackName}-RewriteFunctionARN'

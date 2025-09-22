@@ -48,6 +48,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Check for Existing CloudFront Distribution
+        id: cloudfront-check
+        run: |
+          echo "=== Checking for Persistent CloudFront Distribution ==="
+          
+          # Try to get the CloudFront distribution from current stack
+          EXISTING_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text \
+            --region $AWS_REGION 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING_DISTRIBUTION_ID" ] && [ "$EXISTING_DISTRIBUTION_ID" != "None" ]; then
+            echo "Found existing CloudFront distribution: $EXISTING_DISTRIBUTION_ID"
+            echo "distribution-id=$EXISTING_DISTRIBUTION_ID" >> $GITHUB_OUTPUT
+            echo "has-existing=true" >> $GITHUB_OUTPUT
+            
+            # Store distribution ID for reuse
+            echo "$EXISTING_DISTRIBUTION_ID" > /tmp/cloudfront-distribution-id
+          else
+            echo "No existing CloudFront distribution found"
+            echo "has-existing=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Backup of Current Deployment
         id: backup-check
         run: |
@@ -127,8 +151,13 @@ jobs:
 
       - name: Clean up failed stack after bucket cleanup
         run: |
+          echo "=== Cleaning up failed stack (preserving CloudFront) ==="
+          
+          # Delete the stack - CloudFront distribution will be retained due to DeletionPolicy
           aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION || true
           aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || true
+          
+          echo "✅ Stack cleanup completed (CloudFront distribution preserved)"
 
       - name: Deploy to AWS
         id: deployment-result
@@ -244,7 +273,14 @@ jobs:
           echo "=== 📊 DEPLOYMENT SUMMARY ==="
           if [ "${{ steps.deployment-result.outcome }}" == "success" ]; then
             echo "✅ Status: SUCCESS"
-            echo "🌐 Website URL: https://$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' --output text --region $AWS_REGION 2>/dev/null || echo 'N/A')"
+            WEBSITE_URL="https://$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' --output text --region $AWS_REGION 2>/dev/null || echo 'N/A')"
+            echo "🌐 Website URL: $WEBSITE_URL"
+            echo "🔗 CloudFront URL: PERSISTENT (same URL across deployments)"
+            if [ "${{ steps.cloudfront-check.outputs.has-existing }}" == "true" ]; then
+              echo "♻️  CloudFront: REUSED existing distribution"
+            else
+              echo "🆕 CloudFront: NEW distribution created (will persist for future deployments)"
+            fi
           else
             echo "❌ Status: FAILED"
             if [ "${{ steps.backup-check.outputs.backup-exists }}" == "true" ]; then
