@@ -56,6 +56,35 @@ print_status "Starting ARTFORGE Portfolio deployment..."
 print_status "Installing dependencies..."
 npm install
 
+# Clean up previous AWS resources
+print_status "Checking for existing CloudFormation stack to delete..."
+if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION &> /dev/null; then
+  print_status "Deleting existing stack $STACK_NAME..."
+  aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
+  aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION
+  print_success "Previous CloudFormation stack deleted."
+else
+  print_warning "No existing CloudFormation stack found, skipping deletion."
+fi
+
+print_status "Cleaning up S3 bucket contents if bucket exists..."
+if aws s3 ls "s3://$WEBSITE_BUCKET" --region $AWS_REGION &> /dev/null; then
+    print_status "Deleting all object versions and delete markers..."
+    VERSIONS=$(aws s3api list-object-versions --bucket $WEBSITE_BUCKET --region $AWS_REGION --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json)
+    if [ "$VERSIONS" != "[]" ]; then
+        aws s3api delete-objects --bucket $WEBSITE_BUCKET --region $AWS_REGION --delete "{\"Objects\":$VERSIONS}" || true
+    fi
+    MARKERS=$(aws s3api list-object-versions --bucket $WEBSITE_BUCKET --region $AWS_REGION --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json)
+    if [ "$MARKERS" != "[]" ]; then
+        aws s3api delete-objects --bucket $WEBSITE_BUCKET --region $AWS_REGION --delete "{\"Objects\":$MARKERS}" || true
+    fi
+    # Delete any remaining objects
+    aws s3 rm "s3://$WEBSITE_BUCKET" --recursive --region $AWS_REGION
+    print_success "S3 bucket contents cleaned up."
+else
+    print_warning "S3 bucket does not exist or inaccessible, will be created upon deploy."
+fi
+
 # Deploy CloudFormation stack
 print_status "Deploying AWS infrastructure..."
 STACK_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
