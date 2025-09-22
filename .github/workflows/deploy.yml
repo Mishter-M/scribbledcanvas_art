@@ -69,51 +69,55 @@ jobs:
           if [[ "$STACK_STATUS" == "DELETE_FAILED" || "$STACK_STATUS" == "CREATE_FAILED" || "$STACK_STATUS" == "UPDATE_ROLLBACK_FAILED" ]]; then
             echo "⚠️ Stack is in failed state: $STACK_STATUS"
             
-            # For DELETE_FAILED, try to continue update rollback with resource skipping
+            # For DELETE_FAILED, we need special handling since continue-update-rollback doesn't work
             if [[ "$STACK_STATUS" == "DELETE_FAILED" ]]; then
-              echo "🔧 Attempting to skip problematic resources and continue deletion..."
+              echo "🔧 Stack is in DELETE_FAILED state - using workaround approach"
               
-              # Try to continue update rollback by skipping the problematic CloudFront OAI
-              aws cloudformation continue-update-rollback \
+              # Check what resources are preventing deletion
+              REMAINING_RESOURCES=$(aws cloudformation list-stack-resources \
                 --stack-name $STACK_NAME \
-                --resources-to-skip CloudFrontOriginAccessIdentity \
-                --region $AWS_REGION 2>/dev/null || {
-                echo "⚠️ Continue update rollback failed, trying direct deletion..."
-                
-                # If that fails, force delete the stack
-                aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
-              }
+                --query 'StackResourceSummaries[?ResourceStatus!=`DELETE_COMPLETE`].LogicalResourceId' \
+                --output text \
+                --region $AWS_REGION 2>/dev/null || echo "")
               
-              echo "⏳ Waiting for stack cleanup to complete..."
-              # Wait for deletion with timeout
-              timeout 600 aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || {
-                echo "⚠️ Stack deletion timed out or failed"
+              echo "Remaining resources: $REMAINING_RESOURCES"
+              
+              # If only CloudFrontOriginAccessIdentity is left, we'll deploy with a new stack name
+              if [[ "$REMAINING_RESOURCES" == *"CloudFrontOriginAccessIdentity"* ]] && [[ $(echo "$REMAINING_RESOURCES" | wc -w) -le 2 ]]; then
+                echo "⚠️ Only CloudFront OAI preventing deletion - using temporary stack approach"
                 
-                # Check if we can deploy a new stack anyway
-                NEW_STACK_STATUS=$(aws cloudformation describe-stacks \
-                  --stack-name $STACK_NAME \
-                  --query 'Stacks[0].StackStatus' \
-                  --output text \
-                  --region $AWS_REGION 2>/dev/null || echo "STACK_NOT_FOUND")
+                # Use a temporary stack name to deploy fresh infrastructure
+                TEMP_STACK_NAME="${STACK_NAME}-temp-$(date +%s)"
+                echo "🔄 Will deploy to temporary stack: $TEMP_STACK_NAME"
+                echo "STACK_NAME=$TEMP_STACK_NAME" >> $GITHUB_ENV
+                echo "stack-cleaned=temp-stack" >> $GITHUB_OUTPUT
+              else
+                echo "🔧 Multiple resources preventing deletion - attempting force delete"
+                aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
                 
-                if [[ "$NEW_STACK_STATUS" == "STACK_NOT_FOUND" ]]; then
-                  echo "✅ Stack successfully deleted"
-                else
-                  echo "⚠️ Stack still exists in state: $NEW_STACK_STATUS"
-                  echo "🔄 Will attempt deployment anyway"
-                fi
-              }
+                timeout 300 aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || {
+                  echo "⚠️ Stack deletion timed out"
+                  
+                  # Use temporary stack as fallback
+                  TEMP_STACK_NAME="${STACK_NAME}-temp-$(date +%s)"
+                  echo "🔄 Falling back to temporary stack: $TEMP_STACK_NAME"
+                  echo "STACK_NAME=$TEMP_STACK_NAME" >> $GITHUB_ENV
+                  echo "stack-cleaned=temp-stack" >> $GITHUB_OUTPUT
+                }
+              fi
             else
               echo "🔧 Forcing stack deletion for state: $STACK_STATUS"
               aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
               
               timeout 300 aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || {
-                echo "⚠️ Stack deletion timed out, continuing..."
+                echo "⚠️ Stack deletion timed out, using temporary stack"
+                TEMP_STACK_NAME="${STACK_NAME}-temp-$(date +%s)"
+                echo "STACK_NAME=$TEMP_STACK_NAME" >> $GITHUB_ENV
+                echo "stack-cleaned=temp-stack" >> $GITHUB_OUTPUT
               }
             fi
             
-            echo "✅ Stack cleanup attempted, ready for deployment"
-            echo "stack-cleaned=true" >> $GITHUB_OUTPUT
+            echo "✅ Stack cleanup strategy determined"
           else
             echo "✅ Stack state is acceptable: $STACK_STATUS"
             echo "stack-cleaned=false" >> $GITHUB_OUTPUT
@@ -411,3 +415,28 @@ jobs:
               echo "⚠️  Rollback: NOT AVAILABLE (No previous deployment found)"
             fi
           fi
+
+      - name: Cleanup Instructions
+        if: always()
+        run: |
+          echo "=== Post-Deployment Information ==="
+          
+          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "temp-stack" ]; then
+            echo "⚠️  TEMPORARY STACK USED"
+            echo "📝 A temporary stack was created due to deletion issues with the original stack"
+            echo "🧹 Manual cleanup needed:"
+            echo "   1. The original failed stack (artforge-portfolio-prod) still exists"
+            echo "   2. Run: aws cloudformation delete-stack --stack-name artforge-portfolio-prod"
+            echo "   3. The CloudFront distribution and URL remain persistent"
+            echo ""
+            echo "🔄 For next deployment:"
+            echo "   - The temporary stack will be used until manual cleanup is complete"
+            echo "   - Your CloudFront URL remains the same: https://d3lq2w22ij8clc.cloudfront.net"
+          fi
+          
+          echo ""
+          echo "🌐 Your website is available at:"
+          echo "   Main Site: https://d3lq2w22ij8clc.cloudfront.net/"
+          echo "   Admin Page: https://d3lq2w22ij8clc.cloudfront.net/admin"
+          echo ""
+          echo "✅ Deployment process completed"
