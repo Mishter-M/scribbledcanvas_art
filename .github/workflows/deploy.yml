@@ -41,6 +41,9 @@ jobs:
         run: |
           npm run build
 
+      - name: Fix admin page routing
+        run: ./scripts/fix-admin-routing.sh
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
