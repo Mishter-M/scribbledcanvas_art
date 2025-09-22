@@ -82,20 +82,16 @@ for BUCKET_NAME in "$WEBSITE_BUCKET" "$ARTWORK_BUCKET"; do
     print_status "Bucket $BUCKET_NAME exists, cleaning..."
     
     # Delete all object versions
-    aws s3api list-object-versions --bucket "$BUCKET_NAME" \
-      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
-      --output json > /tmp/delete-versions.json 2>/dev/null || echo "[]" > /tmp/delete-versions.json
-    
-    if [ -s /tmp/delete-versions.json ] && [ "$(cat /tmp/delete-versions.json)" != "[]" ]; then
+    VERSIONS=$(aws s3api list-object-versions --bucket "$BUCKET_NAME" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null || echo "[]")
+    if [ "$VERSIONS" != "[]" ] && [ "$VERSIONS" != "null" ] && [ -n "$VERSIONS" ]; then
+      echo "$VERSIONS" > /tmp/delete-versions.json
       aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-versions.json
     fi
     
     # Delete all delete markers
-    aws s3api list-object-versions --bucket "$BUCKET_NAME" \
-      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
-      --output json > /tmp/delete-markers.json 2>/dev/null || echo "[]" > /tmp/delete-markers.json
-    
-    if [ -s /tmp/delete-markers.json ] && [ "$(cat /tmp/delete-markers.json)" != "[]" ]; then
+    MARKERS=$(aws s3api list-object-versions --bucket "$BUCKET_NAME" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null || echo "[]")
+    if [ "$MARKERS" != "[]" ] && [ "$MARKERS" != "null" ] && [ -n "$MARKERS" ]; then
+      echo "$MARKERS" > /tmp/delete-markers.json
       aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-markers.json
     fi
     
