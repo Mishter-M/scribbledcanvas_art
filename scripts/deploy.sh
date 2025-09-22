@@ -68,22 +68,48 @@ else
 fi
 
 print_status "Cleaning up S3 bucket contents if bucket exists..."
-if aws s3 ls "s3://$WEBSITE_BUCKET" --region $AWS_REGION &> /dev/null; then
-    print_status "Deleting all object versions and delete markers..."
-    VERSIONS=$(aws s3api list-object-versions --bucket $WEBSITE_BUCKET --region $AWS_REGION --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json)
-    if [ "$VERSIONS" != "[]" ]; then
-        aws s3api delete-objects --bucket $WEBSITE_BUCKET --region $AWS_REGION --delete "{\"Objects\":$VERSIONS}" || true
+print_status "Deleting all object versions and delete markers..."
+
+# Clean up website bucket
+WEBSITE_BUCKET="${PROJECT_NAME}-${ENVIRONMENT}-website"
+ARTWORK_BUCKET="${PROJECT_NAME}-${ENVIRONMENT}-artwork"
+
+for BUCKET_NAME in "$WEBSITE_BUCKET" "$ARTWORK_BUCKET"; do
+  print_status "Cleaning bucket: $BUCKET_NAME"
+  
+  # Check if bucket exists first
+  if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+    print_status "Bucket $BUCKET_NAME exists, cleaning..."
+    
+    # Delete all object versions
+    aws s3api list-object-versions --bucket "$BUCKET_NAME" \
+      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+      --output json > /tmp/delete-versions.json 2>/dev/null || echo "[]" > /tmp/delete-versions.json
+    
+    if [ -s /tmp/delete-versions.json ] && [ "$(cat /tmp/delete-versions.json)" != "[]" ]; then
+      aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-versions.json
     fi
-    MARKERS=$(aws s3api list-object-versions --bucket $WEBSITE_BUCKET --region $AWS_REGION --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json)
-    if [ "$MARKERS" != "[]" ]; then
-        aws s3api delete-objects --bucket $WEBSITE_BUCKET --region $AWS_REGION --delete "{\"Objects\":$MARKERS}" || true
+    
+    # Delete all delete markers
+    aws s3api list-object-versions --bucket "$BUCKET_NAME" \
+      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+      --output json > /tmp/delete-markers.json 2>/dev/null || echo "[]" > /tmp/delete-markers.json
+    
+    if [ -s /tmp/delete-markers.json ] && [ "$(cat /tmp/delete-markers.json)" != "[]" ]; then
+      aws s3api delete-objects --bucket "$BUCKET_NAME" --delete file:///tmp/delete-markers.json
     fi
-    # Delete any remaining objects
-    aws s3 rm "s3://$WEBSITE_BUCKET" --recursive --region $AWS_REGION
-    print_success "S3 bucket contents cleaned up."
-else
-    print_warning "S3 bucket does not exist or inaccessible, will be created upon deploy."
-fi
+    
+    # Remove any remaining objects
+    aws s3 rm "s3://$BUCKET_NAME" --recursive 2>/dev/null || true
+    
+    print_success "Bucket $BUCKET_NAME cleaned successfully"
+  else
+    print_status "Bucket $BUCKET_NAME does not exist, skipping cleanup"
+  fi
+done
+
+# Clean up temp files
+rm -f /tmp/delete-versions.json /tmp/delete-markers.json
 
 # Deploy CloudFormation stack
 print_status "Deploying AWS infrastructure..."
