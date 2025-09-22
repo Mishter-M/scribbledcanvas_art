@@ -1,8 +1,22 @@
 import React, { useState, useEffect } from 'react';
 
+// Define the structure for artwork items
+interface Artwork {
+  id: number;
+  title: string;
+  year: string;
+  medium: string;
+  dimensions: string;
+  description: string;
+  imageUrl: string;
+  createdAt: number;
+}
+
 const ArtPortfolio = () => {
   const [currentView, setCurrentView] = useState('landing');
-  const [artworks, setArtworks] = useState([]);
+  
+  // Use typed state for artworks
+  const [artworks, setArtworks] = useState<Artwork[]>([]);
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [currentImageData, setCurrentImageData] = useState(null);
@@ -15,7 +29,7 @@ const ArtPortfolio = () => {
   });
 
   useEffect(() => {
-    const sampleArtworks = [
+    const sampleArtworks: Artwork[] = [
       {
         id: 1,
         title: "Neon Dreams",
@@ -509,20 +523,6 @@ const ArtPortfolio = () => {
                         src={currentImageData}
                         alt="Preview"
                         style={{
-                          maxWidth: '100%',
-                          maxHeight: '400px',
-                          borderRadius: '15px',
-                          marginBottom: '1rem',
-                          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)'
-                        }}
-                      />
-                      <p style={{ color: '#00f5ff', fontWeight: 700, fontSize: '1.1rem' }}>
-                        Click to change image
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      <div style={{
                         fontSize: '4rem',
                         marginBottom: '1rem',
                         background: 'linear-gradient(45deg, #ff0080, #8338ec)',
