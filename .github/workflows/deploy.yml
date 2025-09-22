@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+env:
+  STACK_NAME: artforge-portfolio-prod
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
 jobs:
   deploy:
     name: Build and Deploy to AWS
@@ -39,6 +43,22 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Clean up failed stack
+        run: |
+          aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION || true
+          aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || true
+
+      - name: Empty versioned S3 buckets
+        run: |
+          for BUCKET in ${STACK_NAME}-website ${STACK_NAME}-artwork; do
+            aws s3api list-object-versions --bucket $BUCKET \
+              --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > v.json
+            aws s3api delete-objects --bucket $BUCKET --delete file://v.json || true
+            aws s3api list-object-versions --bucket $BUCKET \
+              --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > m.json
+            aws s3api delete-objects --bucket $BUCKET --delete file://m.json || true
+          done
 
       - name: Deploy to AWS
         run: bash scripts/deploy.sh
