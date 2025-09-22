@@ -1,6 +1,7 @@
 // Editable artwork gallery component with scroll behavior
 import React, { useState, useEffect } from 'react';
 import { useAdmin } from './AdminContext';
+import { contentAPI, ArtworkItem } from '../lib/contentAPI';
 
 interface Artwork {
   id: string;
@@ -71,23 +72,66 @@ const EditableArtworkGallery: React.FC<EditableArtworkGalleryProps> = ({ onArtwo
   const [selectedArtwork, setSelectedArtwork] = useState<Artwork | null>(null);
   const { canEdit, checkPermission } = useAdmin();
 
-  // Load artworks from localStorage on mount
+  // Load artworks from API or localStorage on mount
   useEffect(() => {
-    const savedArtworks = localStorage.getItem('scribbledcanvas_artworks');
-    if (savedArtworks) {
+    const loadArtworks = async () => {
       try {
-        const parsed = JSON.parse(savedArtworks);
-        setArtworks(parsed);
+        const apiArtworks = await contentAPI.getArtworks();
+        if (apiArtworks && apiArtworks.length > 0) {
+          // Convert ArtworkItem[] to Artwork[] (they should be compatible)
+          setArtworks(apiArtworks as Artwork[]);
+        } else {
+          // Fallback to localStorage
+          const savedArtworks = localStorage.getItem('scribbledcanvas_artworks');
+          if (savedArtworks) {
+            const parsed = JSON.parse(savedArtworks);
+            setArtworks(parsed);
+          }
+        }
       } catch (error) {
-        console.error('Error parsing saved artworks:', error);
+        console.error('Error loading artworks:', error);
+        // Fallback to localStorage
+        const savedArtworks = localStorage.getItem('scribbledcanvas_artworks');
+        if (savedArtworks) {
+          try {
+            const parsed = JSON.parse(savedArtworks);
+            setArtworks(parsed);
+          } catch (parseError) {
+            console.error('Error parsing saved artworks:', parseError);
+          }
+        }
       }
-    }
+    };
+
+    loadArtworks();
   }, []);
 
-  const saveArtworks = (newArtworks: Artwork[]) => {
-    setArtworks(newArtworks);
-    localStorage.setItem('scribbledcanvas_artworks', JSON.stringify(newArtworks));
-    onArtworkChange?.(newArtworks);
+  const saveArtworks = async (newArtworks: Artwork[]) => {
+    try {
+      // Convert Artwork[] to ArtworkItem[] and save to API
+      const apiArtworks = newArtworks.map(artwork => ({
+        ...artwork,
+        updatedAt: Date.now()
+      })) as ArtworkItem[];
+      
+      const success = await contentAPI.saveArtworks(apiArtworks);
+      
+      // Update local state
+      setArtworks(newArtworks);
+      onArtworkChange?.(newArtworks);
+      
+      if (success) {
+        console.log('Artworks saved to backend successfully');
+      } else {
+        console.warn('Artworks saved to localStorage only - backend unavailable');
+      }
+    } catch (error) {
+      console.error('Error saving artworks:', error);
+      // Still update local state even if save fails
+      setArtworks(newArtworks);
+      localStorage.setItem('scribbledcanvas_artworks', JSON.stringify(newArtworks));
+      onArtworkChange?.(newArtworks);
+    }
   };
 
   const handleAddArtwork = () => {

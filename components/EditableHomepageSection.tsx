@@ -1,6 +1,7 @@
 // Editable homepage section component
 import React, { useState, useEffect } from 'react';
 import { useAdmin } from './AdminContext';
+import { contentAPI, HomepageContent as APIHomepageContent } from '../lib/contentAPI';
 
 interface HomepageContent {
   artistName: string;
@@ -45,25 +46,65 @@ const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onCon
     return fallback;
   };
 
-  // Load content from localStorage on mount
+  // Load content from API or localStorage on mount
   useEffect(() => {
-    const savedContent = localStorage.getItem('scribbledcanvas_homepage_content');
-    if (savedContent) {
+    const loadContent = async () => {
       try {
-        const parsed = JSON.parse(savedContent);
-        setContent(parsed);
-        setEditContent(parsed);
+        const apiContent = await contentAPI.getHomepageContent();
+        if (apiContent) {
+          setContent(apiContent);
+          setEditContent(apiContent);
+        } else {
+          // Fallback to localStorage if API fails
+          const savedContent = localStorage.getItem('scribbledcanvas_homepage_content');
+          if (savedContent) {
+            const parsed = JSON.parse(savedContent);
+            setContent(parsed);
+            setEditContent(parsed);
+          }
+        }
       } catch (error) {
-        console.error('Error parsing saved content:', error);
+        console.error('Error loading content:', error);
+        // Fallback to localStorage
+        const savedContent = localStorage.getItem('scribbledcanvas_homepage_content');
+        if (savedContent) {
+          try {
+            const parsed = JSON.parse(savedContent);
+            setContent(parsed);
+            setEditContent(parsed);
+          } catch (parseError) {
+            console.error('Error parsing saved content:', parseError);
+          }
+        }
       }
-    }
+    };
+
+    loadContent();
   }, []);
 
-  const handleSave = () => {
-    setContent(editContent);
-    localStorage.setItem('scribbledcanvas_homepage_content', JSON.stringify(editContent));
-    setIsEditing(false);
-    onContentChange?.(editContent);
+  const handleSave = async () => {
+    try {
+      // Save to API (with localStorage fallback built-in)
+      const success = await contentAPI.saveHomepageContent(editContent);
+      
+      // Update local state
+      setContent(editContent);
+      setIsEditing(false);
+      onContentChange?.(editContent);
+      
+      if (success) {
+        console.log('Content saved to backend successfully');
+      } else {
+        console.warn('Content saved to localStorage only - backend unavailable');
+      }
+    } catch (error) {
+      console.error('Error saving content:', error);
+      // Still update local state even if save fails
+      setContent(editContent);
+      localStorage.setItem('scribbledcanvas_homepage_content', JSON.stringify(editContent));
+      setIsEditing(false);
+      onContentChange?.(editContent);
+    }
   };
 
   const handleCancel = () => {

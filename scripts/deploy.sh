@@ -189,6 +189,23 @@ EOF
 print_status "Building the project..."
 npm run build
 
+# Apply admin routing fixes
+print_status "Applying admin routing fixes..."
+if [ -x "./scripts/fix-admin-routing.sh" ]; then
+  ./scripts/fix-admin-routing.sh
+else
+  print_error "fix-admin-routing.sh script not found or not executable"
+  exit 1
+fi
+
+# Inject API endpoint into HTML files for backend integration
+print_status "Injecting API endpoint for backend integration..."
+if [ -x "./scripts/inject-api-endpoint.sh" ]; then
+  STACK_NAME="$STACK_NAME" ./scripts/inject-api-endpoint.sh
+else
+  print_warning "inject-api-endpoint.sh script not found - backend integration may not work"
+fi
+
 # Print deployment summary
 echo ""
 echo "=========================================="

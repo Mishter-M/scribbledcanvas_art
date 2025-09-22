@@ -9,7 +9,11 @@ Parameters:
   
   Environment:
     Type: String
-    Default: 'prod'
+    Default              Resource:
+                - !GetAtt ArtworkTable.Arn
+                - !Sub '${ArtworkTable.Arn}/index/*'
+                - !GetAtt HomepageContentTable.Arn
+                - !Sub '${HomepageContentTable.Arn}/index/*''prod'
     AllowedValues: [dev, staging, prod]
     Description: 'Environment name'
   
@@ -111,15 +115,16 @@ Resources:
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingOptimized
           OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf # CORS-S3Origin
         DefaultRootObject: index.html
+        # More specific error responses to avoid interfering with admin routing
         CustomErrorResponses:
           - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
+            ResponseCode: 404
+            ResponsePagePath: /404.html
+            ErrorCachingMinTTL: 300
           - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-            ErrorCachingMinTTL: 0
+            ResponseCode: 403
+            ResponsePagePath: /403.html
+            ErrorCachingMinTTL: 300
         Enabled: true
         HttpVersion: http2
         PriceClass: PriceClass_100
@@ -188,6 +193,39 @@ Resources:
         - IndexName: CreatedAtIndex
           KeySchema:
             - AttributeName: createdAt
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # DynamoDB Table for homepage content
+  HomepageContentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-homepage-content'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: contentType
+          AttributeType: S
+        - AttributeName: lastModified
+          AttributeType: N
+      KeySchema:
+        - AttributeName: contentType
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: LastModifiedIndex
+          KeySchema:
+            - AttributeName: lastModified
               KeyType: HASH
           Projection:
             ProjectionType: ALL
@@ -327,6 +365,150 @@ Resources:
             }
           };
 
+  # Lambda function for content management
+  ContentManagementFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-content-management'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          HOMEPAGE_CONTENT_TABLE: !Ref HomepageContentTable
+          ARTWORK_TABLE: !Ref ArtworkTable
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const dynamodb = new AWS.DynamoDB.DocumentClient();
+          
+          exports.handler = async (event) => {
+            try {
+              const { httpMethod, pathParameters, body } = event;
+              const path = pathParameters?.proxy || pathParameters?.contentType || 'homepage';
+              
+              // Enable CORS
+              const corsHeaders = {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+              };
+              
+              // Handle preflight requests
+              if (httpMethod === 'OPTIONS') {
+                return {
+                  statusCode: 200,
+                  headers: corsHeaders,
+                  body: ''
+                };
+              }
+              
+              switch (httpMethod) {
+                case 'GET':
+                  return await handleGet(path, corsHeaders);
+                case 'POST':
+                case 'PUT':
+                  return await handlePut(path, JSON.parse(body || '{}'), corsHeaders);
+                case 'DELETE':
+                  return await handleDelete(path, corsHeaders);
+                default:
+                  return {
+                    statusCode: 405,
+                    headers: corsHeaders,
+                    body: JSON.stringify({ error: 'Method not allowed' })
+                  };
+              }
+            } catch (error) {
+              console.error('Error:', error);
+              return {
+                statusCode: 500,
+                headers: {
+                  'Access-Control-Allow-Origin': '*'
+                },
+                body: JSON.stringify({ 
+                  success: false, 
+                  message: error.message 
+                })
+              };
+            }
+          };
+          
+          async function handleGet(contentType, corsHeaders) {
+            if (contentType === 'all') {
+              // Get all content types
+              const params = {
+                TableName: process.env.HOMEPAGE_CONTENT_TABLE
+              };
+              const result = await dynamodb.scan(params).promise();
+              return {
+                statusCode: 200,
+                headers: corsHeaders,
+                body: JSON.stringify({ success: true, data: result.Items })
+              };
+            } else {
+              // Get specific content type
+              const params = {
+                TableName: process.env.HOMEPAGE_CONTENT_TABLE,
+                Key: { contentType }
+              };
+              const result = await dynamodb.get(params).promise();
+              return {
+                statusCode: 200,
+                headers: corsHeaders,
+                body: JSON.stringify({ 
+                  success: true, 
+                  data: result.Item?.data || null 
+                })
+              };
+            }
+          }
+          
+          async function handlePut(contentType, data, corsHeaders) {
+            const params = {
+              TableName: process.env.HOMEPAGE_CONTENT_TABLE,
+              Key: { contentType },
+              UpdateExpression: 'SET #data = :data, lastModified = :lastModified',
+              ExpressionAttributeNames: {
+                '#data': 'data'
+              },
+              ExpressionAttributeValues: {
+                ':data': data,
+                ':lastModified': Date.now()
+              },
+              ReturnValues: 'ALL_NEW'
+            };
+            
+            const result = await dynamodb.update(params).promise();
+            return {
+              statusCode: 200,
+              headers: corsHeaders,
+              body: JSON.stringify({ 
+                success: true, 
+                data: result.Attributes.data 
+              })
+            };
+          }
+          
+          async function handleDelete(contentType, corsHeaders) {
+            const params = {
+              TableName: process.env.HOMEPAGE_CONTENT_TABLE,
+              Key: { contentType }
+            };
+            
+            await dynamodb.delete(params).promise();
+            return {
+              statusCode: 200,
+              headers: corsHeaders,
+              body: JSON.stringify({ 
+                success: true, 
+                message: 'Content deleted successfully' 
+              })
+            };
+          }
+
   # API Gateway
   ArtworkAPI:
     Type: AWS::ApiGateway::RestApi
@@ -383,11 +565,101 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
-  # Lambda Permission for API Gateway
+  # Content API Resource
+  ContentResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ArtworkAPI
+      ParentId: !GetAtt ArtworkAPI.RootResourceId
+      PathPart: 'content'
+
+  # Content Proxy Resource for dynamic paths
+  ContentProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ArtworkAPI
+      ParentId: !Ref ContentResource
+      PathPart: '{proxy+}'
+
+  # Content GET Method
+  ContentGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ArtworkAPI
+      ResourceId: !Ref ContentProxyResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ContentManagementFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Content PUT Method
+  ContentPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ArtworkAPI
+      ResourceId: !Ref ContentProxyResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ContentManagementFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Content OPTIONS Method for CORS
+  ContentOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ArtworkAPI
+      ResourceId: !Ref ContentProxyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,PUT,POST,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: '{"statusCode": 200}'
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Lambda Permission for API Gateway - Artwork
   ArtworkUploadLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref ArtworkUploadFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ArtworkAPI}/*/*'
+
+  # Lambda Permission for API Gateway - Content
+  ContentManagementLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ContentManagementFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ArtworkAPI}/*/*'
@@ -464,3 +736,15 @@ Outputs:
     Value: !Ref ArtworkTable
     Export:
       Name: !Sub '${AWS::StackName}-DynamoDBTable'
+
+  HomepageContentTableName:
+    Description: 'DynamoDB table name for homepage content'
+    Value: !Ref HomepageContentTable
+    Export:
+      Name: !Sub '${AWS::StackName}-HomepageContentTable'
+
+  ContentManagementAPI:
+    Description: 'Content Management API endpoint'
+    Value: !Sub 'https://${ArtworkAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/content'
+    Export:
+      Name: !Sub '${AWS::StackName}-ContentAPI'

@@ -5,12 +5,104 @@
 
 echo "Creating admin routing files..."
 
+# Create 404 and 403 error pages
+echo "Creating error pages..."
+cat > out/404.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Page Not Found - ScribbledCanvas Art</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #000000 0%, #0a0a0a 40%, #1a1a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffd700;
+        }
+        .container { text-align: center; padding: 2rem; }
+        .back-button {
+            background: linear-gradient(45deg, #ffd700, #ffb347);
+            color: #000;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 50px;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>404 - Page Not Found</h1>
+        <p>The page you're looking for doesn't exist.</p>
+        <a href="/" class="back-button">← Back to Portfolio</a>
+    </div>
+</body>
+</html>
+EOF
+
+cat > out/403.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Access Forbidden - ScribbledCanvas Art</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #000000 0%, #0a0a0a 40%, #1a1a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffd700;
+        }
+        .container { text-align: center; padding: 2rem; }
+        .back-button {
+            background: linear-gradient(45deg, #ffd700, #ffb347);
+            color: #000;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 50px;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>403 - Access Forbidden</h1>
+        <p>You don't have permission to access this resource.</p>
+        <a href="/" class="back-button">← Back to Portfolio</a>
+    </div>
+</body>
+</html>
+EOF
+
 # Create a direct copy of admin/index.html as admin file (no extension)  
 # This allows CloudFront to serve /admin directly
 if [ -f "out/admin/index.html" ]; then
-    echo "Creating direct admin page at /admin path..."
-    cp out/admin/index.html out/admin-page
-    echo "- out/admin-page (direct admin page copy)"
+    echo "Creating direct admin page for /admin path..."
+    
+    # Create a file named 'admin' (no extension) with the admin page content
+    cp out/admin/index.html out/admin-direct
+    
+    # Also ensure the admin.html redirect works
+    echo "- out/admin-direct (for direct /admin access)"
+    echo "- out/admin.html (redirect page)"
+    echo "- out/admin/index.html (for /admin/ access)"
 fi
 
 # Create user-friendly admin.html that provides clear navigation
