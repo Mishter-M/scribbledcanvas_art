@@ -217,15 +217,17 @@ const ArtPortfolio = () => {
               letterSpacing: '1px'
             }}
             onMouseOver={(e) => {
-              e.target.style.background = '#00f5ff';
-              e.target.style.color = '#000814';
-              e.target.style.transform = 'translateY(-2px)';
-            }}
-            onMouseOut={(e) => {
-              e.target.style.background = 'transparent';
-              e.target.style.color = '#00f5ff';
-              e.target.style.transform = 'translateY(0)';
-            }}
+                  const target = e.target as HTMLButtonElement;
+                  target.style.background = '#000014';
+                  target.style.color = '#ffd700';
+                  target.style.transform = 'translateY(-2px)';
+                }}
+                onMouseOut={(e) => {
+                  const target = e.target as HTMLButtonElement;
+                  target.style.background = '#001020';
+                  target.style.color = '#ffffff';
+                  target.style.transform = 'translateY(0)';
+                }}
           >
             View Portfolio
           </button>
@@ -291,10 +293,12 @@ const ArtPortfolio = () => {
                 transition: 'all 0.3s ease'
               }}
               onMouseOver={(e) => {
-                e.target.style.transform = 'translateY(-5px) scale(1.05)';
+                const target = e.target as HTMLDivElement;
+                target.style.transform = 'translateY(-5px) scale(1.05)';
               }}
               onMouseOut={(e) => {
-                e.target.style.transform = 'translateY(0) scale(1)';
+                const target = e.target as HTMLDivElement;
+                target.style.transform = 'translateY(0) scale(1)';
               }}
             >
               🚀 Explore Gallery
@@ -319,14 +323,14 @@ const ArtPortfolio = () => {
                 transition: 'all 0.3s ease'
               }}
               onMouseOver={(e) => {
-                e.target.style.background = '#00f5ff';
-                e.target.style.color = '#000814';
-                e.target.style.transform = 'translateY(-5px)';
+                (e.target as any).style.background = '#00f5ff';
+                (e.target as any).style.color = '#000814';
+                (e.target as any).style.transform = 'translateY(-5px)';
               }}
               onMouseOut={(e) => {
-                e.target.style.background = 'transparent';
-                e.target.style.color = '#00f5ff';
-                e.target.style.transform = 'translateY(0)';
+                (e.target as any).style.background = 'transparent';
+                (e.target as any).style.color = '#00f5ff';
+                (e.target as any).style.transform = 'translateY(0)';
               }}
             >
               ➕ Add Artwork
@@ -446,10 +450,10 @@ const ArtPortfolio = () => {
               letterSpacing: '1px'
             }}
             onMouseOver={(e) => {
-              e.target.style.transform = 'translateY(-3px)';
+              (e.target as any).style.transform = 'translateY(-3px)';
             }}
             onMouseOut={(e) => {
-              e.target.style.transform = 'translateY(0)';
+              (e.target as any).style.transform = 'translateY(0)';
             }}
           >
             {showUploadForm ? '✕ Close' : '+ Add Artwork'}
@@ -762,17 +766,17 @@ const ArtPortfolio = () => {
                     letterSpacing: '2px'
                   }}
                   onMouseOver={(e) => {
-                    e.target.style.transform = 'translateY(-3px) scale(1.02)';
-                    e.target.style.boxShadow = '0 15px 40px rgba(255, 0, 128, 0.4)';
+                    (e.target as any).style.transform = 'translateY(-3px) scale(1.02)';
+                    (e.target as any).style.boxShadow = '0 15px 40px rgba(255, 0, 128, 0.4)';
                   }}
                   onMouseOut={(e) => {
-                    e.target.style.transform = 'translateY(0) scale(1)';
-                    e.target.style.boxShadow = 'none';
+                    (e.target as any).style.transform = 'translateY(0) scale(1)';
+                    (e.target as any).style.boxShadow = 'none';
                   }}
                 >
                   🚀 Upload to AWS
                 </button>
-              }
+              )}
             </div>
           </div>
         </section>
@@ -853,10 +857,10 @@ const ArtPortfolio = () => {
                       transition: 'transform 0.4s ease'
                     }}
                     onMouseOver={(e) => {
-                      e.target.style.transform = 'scale(1.1)';
+                      (e.target as any).style.transform = 'scale(1.1)';
                     }}
                     onMouseOut={(e) => {
-                      e.target.style.transform = 'scale(1)';
+                      (e.target as any).style.transform = 'scale(1)';
                     }}
                   />
                   <div style={{
