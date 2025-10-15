@@ -84,6 +84,9 @@ const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onCon
 
   const handleSave = async () => {
     try {
+      // Show loading state
+      console.log('Saving homepage content...');
+      
       // Save to API (with localStorage fallback built-in)
       const success = await contentAPI.saveHomepageContent(editContent);
       
@@ -93,17 +96,29 @@ const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onCon
       onContentChange?.(editContent);
       
       if (success) {
-        console.log('Content saved to backend successfully');
+        console.log('✅ Content saved to backend successfully');
+        // Show success message briefly
+        alert('Content saved successfully!');
       } else {
-        console.warn('Content saved to localStorage only - backend unavailable');
+        console.warn('⚠️ Content saved locally only - backend unavailable');
+        alert('Content saved locally. Will sync to server when connection is restored.');
       }
     } catch (error) {
-      console.error('Error saving content:', error);
+      console.error('❌ Error saving content:', error);
+      
+      // Check if it's a size-related error
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('too large') || errorMessage.includes('413')) {
+        alert('Image is too large for storage. Please use a smaller image or reduce quality.');
+        return; // Don't close the modal if there's a size error
+      }
+      
       // Still update local state even if save fails
       setContent(editContent);
       localStorage.setItem('scribbledcanvas_homepage_content', JSON.stringify(editContent));
       setIsEditing(false);
       onContentChange?.(editContent);
+      alert('Saved locally due to connection issues. Will sync when connection is restored.');
     }
   };
 
@@ -116,12 +131,57 @@ const EditableHomepageSection: React.FC<EditableHomepageSectionProps> = ({ onCon
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    // Validate file size (limit to 2MB to avoid DynamoDB issues)
+    const maxSize = 2 * 1024 * 1024; // 2MB
+    if (file.size > maxSize) {
+      alert('Image file is too large. Please choose an image smaller than 2MB.');
+      return;
+    }
+
+    // Create a canvas to compress the image
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+
+    img.onload = () => {
+      // Calculate new dimensions (max 1200px width)
+      const maxWidth = 1200;
+      let { width, height } = img;
+      
+      if (width > maxWidth) {
+        height = (height * maxWidth) / width;
+        width = maxWidth;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      // Draw and compress the image
+      ctx?.drawImage(img, 0, 0, width, height);
+      
+      // Convert to compressed base64 (quality: 0.7)
+      const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      
+      // Check if compressed image is still too large (DynamoDB has ~400KB limit)
+      if (compressedDataUrl.length > 350000) { // ~350KB to be safe
+        alert('Image is still too large after compression. Please choose a smaller image.');
+        return;
+      }
+
       setEditContent({
         ...editContent,
-        backgroundImage: e.target?.result as string
+        backgroundImage: compressedDataUrl
       });
+    };
+
+    img.onerror = () => {
+      alert('Error loading image. Please try a different file.');
+    };
+
+    // Load the image
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      img.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
   };

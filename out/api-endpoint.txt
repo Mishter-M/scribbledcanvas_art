@@ -1,1 +1,0 @@
-https://32wulz9j73.execute-api.us-east-1.amazonaws.com/prod/content
