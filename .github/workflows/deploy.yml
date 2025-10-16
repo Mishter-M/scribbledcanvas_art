@@ -58,27 +58,27 @@ jobs:
           # Clean up any orphaned CloudWatch log groups that might prevent stack creation
           # These can remain from deleted stacks and cause CREATE_FAILED errors
           
+          # Check for the specific problematic log group first
+          echo "Checking for specific orphaned log group: /aws/s3/artforge-portfolio-prod"
+          if aws logs describe-log-groups --region $AWS_REGION --log-group-name-prefix "/aws/s3/artforge-portfolio-prod" --query 'logGroups[0].logGroupName' --output text 2>/dev/null | grep -q "artforge-portfolio-prod"; then
+            echo "Found orphaned S3 log group, deleting..."
+            aws logs delete-log-group --region $AWS_REGION --log-group-name "/aws/s3/artforge-portfolio-prod" || echo "Failed to delete, continuing..."
+          else
+            echo "No orphaned S3 log group found"
+          fi
+          
+          # Clean up Lambda log groups
           echo "Checking for orphaned Lambda log groups..."
-          aws logs describe-log-groups --region $AWS_REGION 
-            --log-group-name-prefix "/aws/lambda/artforge-portfolio-prod" 
-            --query 'logGroups[].logGroupName' --output text 2>/dev/null | 
-            while read -r log_group; do
-              if [[ ! -z "$log_group" ]]; then
-                echo "Deleting orphaned log group: $log_group"
-                aws logs delete-log-group --region $AWS_REGION --log-group-name "$log_group" || true
-              fi
-            done
-            
-          echo "Checking for orphaned S3 log groups..."
-          aws logs describe-log-groups --region $AWS_REGION 
-            --log-group-name-prefix "/aws/s3/artforge-portfolio-prod" 
-            --query 'logGroups[].logGroupName' --output text 2>/dev/null | 
-            while read -r log_group; do
-              if [[ ! -z "$log_group" ]]; then
-                echo "Deleting orphaned log group: $log_group"
-                aws logs delete-log-group --region $AWS_REGION --log-group-name "$log_group" || true
-              fi
-            done
+          aws logs describe-log-groups --region $AWS_REGION --log-group-name-prefix "/aws/lambda/artforge-portfolio-prod" --query 'logGroups[].logGroupName' --output text 2>/dev/null | tr '\t' '\n' | while IFS= read -r log_group; do
+            if [[ ! -z "$log_group" && "$log_group" != "None" ]]; then
+              echo "Deleting orphaned Lambda log group: $log_group"
+              aws logs delete-log-group --region $AWS_REGION --log-group-name "$log_group" || echo "Failed to delete $log_group, continuing..."
+            fi
+          done
+          
+          # Wait a moment for deletions to propagate
+          echo "Waiting for log group deletions to propagate..."
+          sleep 10
           
           echo "✅ Orphaned resource cleanup completed"
 
