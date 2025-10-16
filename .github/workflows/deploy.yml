@@ -73,6 +73,23 @@ jobs:
             exit 0
           fi
           
+          # No working temp stack found - check for orphaned resources from deleted stacks
+          echo "🧹 No working temporary stack found, checking for orphaned resources..."
+          
+          # Clean up any orphaned CloudWatch log groups that might prevent new stack creation
+          echo "Cleaning orphaned CloudWatch log groups..."
+          aws logs describe-log-groups --region $AWS_REGION \
+            --log-group-name-prefix "/aws/lambda/artforge-portfolio-prod" \
+            --query 'logGroups[].logGroupName' --output text 2>/dev/null | \
+            xargs -r -n1 aws logs delete-log-group --region $AWS_REGION --log-group-name || true
+            
+          aws logs describe-log-groups --region $AWS_REGION \
+            --log-group-name-prefix "/aws/s3/artforge-portfolio-prod" \
+            --query 'logGroups[].logGroupName' --output text 2>/dev/null | \
+            xargs -r -n1 aws logs delete-log-group --region $AWS_REGION --log-group-name || true
+          
+          echo "✅ Orphaned resources cleanup completed"
+          
           # Check current stack status
           STACK_STATUS=$(aws cloudformation describe-stacks \
             --stack-name $STACK_NAME \
