@@ -51,108 +51,62 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Handle Failed Stack State
-        id: stack-cleanup
+      - name: Clean Orphaned Resources
         run: |
-          echo "=== Checking Stack State and Cleaning Up if Needed ==="
+          echo "=== Cleaning Orphaned CloudWatch Log Groups ==="
           
-          # First, check if there's already a working temporary stack we can use
-          EXISTING_TEMP_STACK=$(aws cloudformation list-stacks \
-            --region $AWS_REGION \
-            --query "StackSummaries[?contains(StackName, '${STACK_NAME}-temp') && (StackStatus == 'CREATE_COMPLETE' || StackStatus == 'UPDATE_COMPLETE')].StackName" \
-            --output text 2>/dev/null | head -1)
+          # Clean up any orphaned CloudWatch log groups that might prevent stack creation
+          # These can remain from deleted stacks and cause CREATE_FAILED errors
           
-          if [ -n "$EXISTING_TEMP_STACK" ] && [ "$EXISTING_TEMP_STACK" != "None" ]; then
-            echo "✅ Found existing working temporary stack: $EXISTING_TEMP_STACK"
-            echo "🔄 Will use existing temporary stack instead of creating new one"
-            echo "STACK_NAME=$EXISTING_TEMP_STACK" >> $GITHUB_ENV
-            echo "stack-cleaned=existing-temp" >> $GITHUB_OUTPUT
+          echo "Checking for orphaned Lambda log groups..."
+          aws logs describe-log-groups --region $AWS_REGION 
+            --log-group-name-prefix "/aws/lambda/artforge-portfolio-prod" 
+            --query 'logGroups[].logGroupName' --output text 2>/dev/null | 
+            while read -r log_group; do
+              if [[ ! -z "$log_group" ]]; then
+                echo "Deleting orphaned log group: $log_group"
+                aws logs delete-log-group --region $AWS_REGION --log-group-name "$log_group" || true
+              fi
+            done
+            
+          echo "Checking for orphaned S3 log groups..."
+          aws logs describe-log-groups --region $AWS_REGION 
+            --log-group-name-prefix "/aws/s3/artforge-portfolio-prod" 
+            --query 'logGroups[].logGroupName' --output text 2>/dev/null | 
+            while read -r log_group; do
+              if [[ ! -z "$log_group" ]]; then
+                echo "Deleting orphaned log group: $log_group"
+                aws logs delete-log-group --region $AWS_REGION --log-group-name "$log_group" || true
+              fi
+            done
+          
+          echo "✅ Orphaned resource cleanup completed"
+
+      - name: Setup Deployment Strategy
+        id: deployment-strategy
+        run: |
+          echo "=== Analyzing Current Deployment State ==="
+          
+          # Check for existing temporary stacks that are working
+          TEMP_STACKS=$(aws cloudformation list-stacks 
+            --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE 
+            --query "StackSummaries[?contains(StackName, '${STACK_NAME}-temp-')].{Name:StackName,Status:StackStatus,CreationTime:CreationTime}" 
+            --output text 
+            --region $AWS_REGION 2>/dev/null || echo "")
+          
+          if [[ ! -z "$TEMP_STACKS" ]]; then
+            echo "📋 Found existing temporary stacks:"
+            echo "$TEMP_STACKS"
+            
+            # Get the most recent working temp stack
+            MOST_RECENT_TEMP=$(echo "$TEMP_STACKS" | sort -k3 -r | head -1 | awk '{print $1}')
+            echo "🎯 Most recent working temporary stack: $MOST_RECENT_TEMP"
+            echo "temp-stack=$MOST_RECENT_TEMP" >> $GITHUB_OUTPUT
+            echo "strategy=reuse-temp" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # No working temp stack found - check for orphaned resources from deleted stacks
-          echo "🧹 No working temporary stack found, checking for orphaned resources..."
-          
-          # Clean up any orphaned CloudWatch log groups that might prevent new stack creation
-          echo "Cleaning orphaned CloudWatch log groups..."
-          aws logs describe-log-groups --region $AWS_REGION \
-            --log-group-name-prefix "/aws/lambda/artforge-portfolio-prod" \
-            --query 'logGroups[].logGroupName' --output text 2>/dev/null | \
-            xargs -r -n1 aws logs delete-log-group --region $AWS_REGION --log-group-name || true
-            
-          aws logs describe-log-groups --region $AWS_REGION \
-            --log-group-name-prefix "/aws/s3/artforge-portfolio-prod" \
-            --query 'logGroups[].logGroupName' --output text 2>/dev/null | \
-            xargs -r -n1 aws logs delete-log-group --region $AWS_REGION --log-group-name || true
-          
-          echo "✅ Orphaned resources cleanup completed"
-          
-          # Check current stack status
-          STACK_STATUS=$(aws cloudformation describe-stacks \
-            --stack-name $STACK_NAME \
-            --query 'Stacks[0].StackStatus' \
-            --output text \
-            --region $AWS_REGION 2>/dev/null || echo "STACK_NOT_FOUND")
-          
-          echo "Current stack status: $STACK_STATUS"
-          
-          # Handle failed states
-          if [[ "$STACK_STATUS" == "DELETE_FAILED" || "$STACK_STATUS" == "CREATE_FAILED" || "$STACK_STATUS" == "UPDATE_ROLLBACK_FAILED" ]]; then
-            echo "⚠️ Stack is in failed state: $STACK_STATUS"
-            
-            # For DELETE_FAILED, we need special handling since continue-update-rollback doesn't work
-            if [[ "$STACK_STATUS" == "DELETE_FAILED" ]]; then
-              echo "🔧 Stack is in DELETE_FAILED state - using workaround approach"
-              
-              # Check what resources are preventing deletion
-              REMAINING_RESOURCES=$(aws cloudformation list-stack-resources \
-                --stack-name $STACK_NAME \
-                --query 'StackResourceSummaries[?ResourceStatus!=`DELETE_COMPLETE`].LogicalResourceId' \
-                --output text \
-                --region $AWS_REGION 2>/dev/null || echo "")
-              
-              echo "Remaining resources: $REMAINING_RESOURCES"
-              
-              # If only CloudFrontOriginAccessIdentity is left, we'll deploy with a new stack name
-              if [[ "$REMAINING_RESOURCES" == *"CloudFrontOriginAccessIdentity"* ]] && [[ $(echo "$REMAINING_RESOURCES" | wc -w) -le 2 ]]; then
-                echo "⚠️ Only CloudFront OAI preventing deletion - using temporary stack approach"
-                
-                # Use a temporary stack name to deploy fresh infrastructure
-                TEMP_STACK_NAME="${STACK_NAME}-temp-$(date +%s)"
-                echo "🔄 Will deploy to temporary stack: $TEMP_STACK_NAME"
-                echo "STACK_NAME=$TEMP_STACK_NAME" >> $GITHUB_ENV
-                echo "stack-cleaned=temp-stack" >> $GITHUB_OUTPUT
-              else
-                echo "🔧 Multiple resources preventing deletion - attempting force delete"
-                aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
-                
-                timeout 300 aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || {
-                  echo "⚠️ Stack deletion timed out"
-                  
-                  # Use temporary stack as fallback
-                  TEMP_STACK_NAME="${STACK_NAME}-temp-$(date +%s)"
-                  echo "🔄 Falling back to temporary stack: $TEMP_STACK_NAME"
-                  echo "STACK_NAME=$TEMP_STACK_NAME" >> $GITHUB_ENV
-                  echo "stack-cleaned=temp-stack" >> $GITHUB_OUTPUT
-                }
-              fi
-            else
-              echo "🔧 Forcing stack deletion for state: $STACK_STATUS"
-              aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_REGION
-              
-              timeout 300 aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION || {
-                echo "⚠️ Stack deletion timed out, using temporary stack"
-                TEMP_STACK_NAME="${STACK_NAME}-temp-$(date +%s)"
-                echo "STACK_NAME=$TEMP_STACK_NAME" >> $GITHUB_ENV
-                echo "stack-cleaned=temp-stack" >> $GITHUB_OUTPUT
-              }
-            fi
-            
-            echo "✅ Stack cleanup strategy determined"
-          else
-            echo "✅ Stack state is acceptable: $STACK_STATUS"
-            echo "stack-cleaned=false" >> $GITHUB_OUTPUT
-          fi
+          echo "🧹 No working temporary stack found, will create new temp stack..."
 
       - name: Check for Existing CloudFront Distribution
         id: cloudfront-check
