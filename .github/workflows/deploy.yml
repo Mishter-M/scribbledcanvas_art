@@ -1,4 +1,4 @@
-name: Simple Deploy
+name: Robust Deploy with Rollback
 
 on:
   push:
@@ -11,8 +11,13 @@ env:
 
 jobs:
   deploy:
-    name: Build and Deploy to AWS
+    name: Deploy with Rollback Protection
     runs-on: ubuntu-latest
+    
+    outputs:
+      deployment-status: ${{ steps.deployment.outcome }}
+      new-stack-name: ${{ steps.deployment.outputs.new-stack-name }}
+      previous-stack-name: ${{ steps.deployment.outputs.previous-stack-name }}
 
     steps:
       - name: Checkout Repository
@@ -40,70 +45,192 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Deploy to AWS
+      - name: Create Stack Policy for Critical Resource Protection
         run: |
-          echo "=== Starting Simple AWS Deployment ==="
-          set -e  # Exit on any error
+          cat > stack-policy.json << 'EOF'
+          {
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "Update:*",
+                "Resource": "*"
+              },
+              {
+                "Effect": "Deny",
+                "Principal": "*",
+                "Action": "Update:Delete",
+                "Resource": "*",
+                "Condition": {
+                  "StringEquals": {
+                    "ResourceType": [
+                      "AWS::CloudFront::Distribution",
+                      "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+      - name: Deploy with Rollback Protection
+        id: deployment
+        run: |
+          echo "=== Robust Deployment with Rollback ==="
           
-          # Generate unique temp stack name
+          # Find current active stack
+          CURRENT_STACK=$(aws cloudformation list-stacks \
+            --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+            --query "StackSummaries[?contains(StackName, '${STACK_NAME}')].{Name:StackName,Created:CreationTime}" \
+            --output text \
+            --region $AWS_REGION 2>/dev/null | sort -k2 -r | head -1 | awk '{print $1}' || echo "")
+          
+          if [ ! -z "$CURRENT_STACK" ]; then
+            echo "📋 Current active stack: $CURRENT_STACK"
+            echo "previous-stack-name=$CURRENT_STACK" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No current active stack found"
+            echo "previous-stack-name=" >> $GITHUB_OUTPUT
+          fi
+          
+          # Generate new stack name
           TIMESTAMP=$(date +%s)
-          TEMP_STACK_NAME="${STACK_NAME}-temp-${TIMESTAMP}"
+          NEW_STACK_NAME="${STACK_NAME}-${TIMESTAMP}"
+          echo "new-stack-name=$NEW_STACK_NAME" >> $GITHUB_OUTPUT
           
-          echo "🔄 Creating new temporary stack: $TEMP_STACK_NAME"
+          echo "� Creating new stack: $NEW_STACK_NAME"
           
-          # Deploy CloudFormation stack
-          aws cloudformation deploy \
+          # Deploy new stack with stack policy
+          if aws cloudformation deploy \
             --template-file aws/cloudformation-template.yaml \
-            --stack-name $TEMP_STACK_NAME \
+            --stack-name $NEW_STACK_NAME \
             --parameter-overrides \
                 ProjectName=artforge-portfolio \
                 Environment=prod \
             --capabilities CAPABILITY_NAMED_IAM \
             --region $AWS_REGION \
-            --no-fail-on-empty-changeset
-          
-          echo "✅ CloudFormation deployment completed successfully"
+            --no-fail-on-empty-changeset; then
+            
+            # Set stack policy to protect critical resources
+            aws cloudformation set-stack-policy \
+              --stack-name $NEW_STACK_NAME \
+              --stack-policy-body file://stack-policy.json \
+              --region $AWS_REGION
+            
+            echo "✅ Stack deployment successful"
+            
+            # Get stack outputs
+            WEBSITE_BUCKET=$(aws cloudformation describe-stacks \
+              --stack-name $NEW_STACK_NAME \
+              --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' \
+              --output text \
+              --region $AWS_REGION)
 
-          # Get stack outputs
-          WEBSITE_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name $TEMP_STACK_NAME \
-            --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' \
-            --output text \
-            --region $AWS_REGION)
+            CLOUDFRONT_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+              --stack-name $NEW_STACK_NAME \
+              --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+              --output text \
+              --region $AWS_REGION)
 
-          CLOUDFRONT_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
-            --stack-name $TEMP_STACK_NAME \
-            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
-            --output text \
-            --region $AWS_REGION)
+            WEBSITE_URL=$(aws cloudformation describe-stacks \
+              --stack-name $NEW_STACK_NAME \
+              --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
+              --output text \
+              --region $AWS_REGION)
 
-          WEBSITE_URL=$(aws cloudformation describe-stacks \
-            --stack-name $TEMP_STACK_NAME \
-            --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
-            --output text \
-            --region $AWS_REGION)
+            # Upload website files
+            echo "📁 Uploading website files to S3..."
+            if aws s3 sync out/ s3://$WEBSITE_BUCKET --delete --region $AWS_REGION; then
+              
+              # Verify upload
+              UPLOAD_COUNT=$(aws s3 ls s3://$WEBSITE_BUCKET --recursive | wc -l)
+              echo "✅ Uploaded $UPLOAD_COUNT files successfully"
+              
+              if [ "$UPLOAD_COUNT" -gt 0 ]; then
+                # Invalidate CloudFront cache
+                aws cloudfront create-invalidation \
+                  --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+                  --paths "/*" \
+                  --region $AWS_REGION
 
-          # Upload website files to S3
-          echo "Uploading website files to S3..."
-          aws s3 sync out/ s3://$WEBSITE_BUCKET --delete --region $AWS_REGION
-          
-          # Verify upload worked
-          UPLOAD_COUNT=$(aws s3 ls s3://$WEBSITE_BUCKET --recursive | wc -l)
-          echo "✅ Uploaded files count: $UPLOAD_COUNT"
-          
-          if [ "$UPLOAD_COUNT" -eq 0 ]; then
-            echo "❌ No files were uploaded to S3!"
+                echo "🎉 Deployment completed successfully!"
+                echo "🌐 Website URL: $WEBSITE_URL"
+                echo "📋 New Stack: $NEW_STACK_NAME"
+                exit 0
+              else
+                echo "❌ File upload verification failed"
+                exit 1
+              fi
+            else
+              echo "❌ S3 upload failed"
+              exit 1
+            fi
+          else
+            echo "❌ CloudFormation deployment failed"
             exit 1
           fi
 
-          # Invalidate CloudFront cache
-          echo "Invalidating CloudFront cache..."
-          aws cloudfront create-invalidation \
-            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-            --paths "/*" \
-            --region $AWS_REGION
+      - name: Cleanup and Rollback on Failure
+        if: failure()
+        run: |
+          echo "=== Cleanup and Rollback Process ==="
+          
+          NEW_STACK_NAME="${{ steps.deployment.outputs.new-stack-name }}"
+          PREVIOUS_STACK_NAME="${{ steps.deployment.outputs.previous-stack-name }}"
+          
+          if [ ! -z "$NEW_STACK_NAME" ]; then
+            echo "🧹 Cleaning up failed deployment stack: $NEW_STACK_NAME"
+            
+            # Check if new stack exists and delete it
+            if aws cloudformation describe-stacks --stack-name $NEW_STACK_NAME --region $AWS_REGION >/dev/null 2>&1; then
+              echo "Deleting failed stack..."
+              aws cloudformation delete-stack --stack-name $NEW_STACK_NAME --region $AWS_REGION
+              
+              echo "Waiting for stack deletion..."
+              aws cloudformation wait stack-delete-complete --stack-name $NEW_STACK_NAME --region $AWS_REGION || true
+              echo "✅ Failed stack cleaned up"
+            fi
+          fi
+          
+          if [ ! -z "$PREVIOUS_STACK_NAME" ]; then
+            echo "🔄 Previous stack still active: $PREVIOUS_STACK_NAME"
+            echo "✅ Automatic rollback to previous working version"
+            
+            # Get previous stack URL
+            PREVIOUS_URL=$(aws cloudformation describe-stacks \
+              --stack-name $PREVIOUS_STACK_NAME \
+              --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
+              --output text \
+              --region $AWS_REGION 2>/dev/null || echo "N/A")
+            
+            echo "� Website remains available at: $PREVIOUS_URL"
+          else
+            echo "⚠️ No previous stack to rollback to"
+          fi
 
-          echo "🎉 Deployment completed successfully!"
-          echo "🌐 Website URL: $WEBSITE_URL"
-          echo "📋 Stack Name: $TEMP_STACK_NAME"
-          echo "🪣 S3 Bucket: $WEBSITE_BUCKET"
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "=== Deployment Summary ==="
+          
+          if [ "${{ steps.deployment.outcome }}" == "success" ]; then
+            echo "✅ Status: SUCCESS"
+            echo "🌐 New deployment active"
+            
+            # Optionally clean up old stacks (keep last 2)
+            echo "🧹 Cleaning up old deployment stacks..."
+            aws cloudformation list-stacks \
+              --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
+              --query "StackSummaries[?contains(StackName, '${STACK_NAME}') && StackName != '${{ steps.deployment.outputs.new-stack-name }}'].StackName" \
+              --output text \
+              --region $AWS_REGION | tr '\t' '\n' | head -n -1 | while read -r OLD_STACK; do
+              if [ ! -z "$OLD_STACK" ]; then
+                echo "Deleting old stack: $OLD_STACK"
+                aws cloudformation delete-stack --stack-name $OLD_STACK --region $AWS_REGION || true
+              fi
+            done
+          else
+            echo "❌ Status: FAILED"
+            echo "🔄 Rollback completed - previous version remains active"
+          fi
