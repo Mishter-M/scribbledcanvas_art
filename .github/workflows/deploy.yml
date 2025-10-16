@@ -54,30 +54,16 @@ jobs:
 
 
       - name: Setup Deployment Strategy
-        id: deployment-strategy
+        id: deployment-strategy  
         run: |
-          echo "=== Analyzing Current Deployment State ==="
+          echo "=== Setting up Deployment Strategy ==="
           
-          # Check for existing temporary stacks that are working
-          TEMP_STACKS=$(aws cloudformation list-stacks 
-            --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE 
-            --query "StackSummaries[?contains(StackName, '${STACK_NAME}-temp-')].{Name:StackName,Status:StackStatus,CreationTime:CreationTime}" 
-            --output text 
-            --region $AWS_REGION 2>/dev/null || echo "")
+          # Always create new temp stack for simplicity and reliability
+          TIMESTAMP=$(date +%s)
+          TEMP_STACK_NAME="${STACK_NAME}-temp-${TIMESTAMP}"
           
-          if [[ ! -z "$TEMP_STACKS" ]]; then
-            echo "📋 Found existing temporary stacks:"
-            echo "$TEMP_STACKS"
-            
-            # Get the most recent working temp stack
-            MOST_RECENT_TEMP=$(echo "$TEMP_STACKS" | sort -k3 -r | head -1 | awk '{print $1}')
-            echo "🎯 Most recent working temporary stack: $MOST_RECENT_TEMP"
-            echo "temp-stack=$MOST_RECENT_TEMP" >> $GITHUB_OUTPUT
-            echo "strategy=reuse-temp" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          echo "🧹 No working temporary stack found, will create new temp stack..."
+          echo "🔄 Will create new temporary stack: $TEMP_STACK_NAME"
+          echo "temp-stack-name=$TEMP_STACK_NAME" >> $GITHUB_OUTPUT
           echo "strategy=create-temp" >> $GITHUB_OUTPUT
 
       - name: Check for Existing CloudFront Distribution
@@ -196,11 +182,11 @@ jobs:
           echo "=== Starting AWS Deployment ==="
           set -e  # Exit on any error
           
-          # Show deployment context
-          DEPLOYMENT_STRATEGY="${{ steps.deployment-strategy.outputs.strategy }}"
-          echo "📋 Deployment strategy: $DEPLOYMENT_STRATEGY"
+          # Use the temp stack name from deployment strategy
+          TEMP_STACK_NAME="${{ steps.deployment-strategy.outputs.temp-stack-name }}"
+          export STACK_NAME="$TEMP_STACK_NAME"
           
-          if [ "$DEPLOYMENT_STRATEGY" == "reuse-temp" ]; then
+          echo "🔄 Creating new temporary stack: $STACK_NAME"
             TEMP_STACK_NAME="${{ steps.deployment-strategy.outputs.temp-stack }}"
             echo "🔄 Using existing temporary stack: $TEMP_STACK_NAME"
             echo "⚡ Skipping CloudFormation deployment - stack already exists and works"
