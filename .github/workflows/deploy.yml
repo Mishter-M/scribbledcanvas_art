@@ -197,7 +197,10 @@ jobs:
           set -e  # Exit on any error
           
           # Show deployment context
-          if [ "${{ steps.deployment-strategy.outputs.strategy }}" == "reuse-temp" ]; then
+          DEPLOYMENT_STRATEGY="${{ steps.deployment-strategy.outputs.strategy }}"
+          echo "📋 Deployment strategy: $DEPLOYMENT_STRATEGY"
+          
+          if [ "$DEPLOYMENT_STRATEGY" == "reuse-temp" ]; then
             TEMP_STACK_NAME="${{ steps.deployment-strategy.outputs.temp-stack }}"
             echo "🔄 Using existing temporary stack: $TEMP_STACK_NAME"
             echo "⚡ Skipping CloudFormation deployment - stack already exists and works"
@@ -217,7 +220,7 @@ jobs:
             
             echo "✅ Existing stack is healthy: $STACK_STATUS"
             
-          else
+          elif [ "$DEPLOYMENT_STRATEGY" == "create-temp" ] || [ -z "$DEPLOYMENT_STRATEGY" ]; then
             echo "🔄 Creating new temporary stack (main stack in failed state)"
             
             # Generate unique temp stack name
@@ -238,7 +241,14 @@ jobs:
               --capabilities CAPABILITY_NAMED_IAM \
               --region $AWS_REGION \
               --no-fail-on-empty-changeset
+          
+          else
+            echo "❌ Unknown deployment strategy: $DEPLOYMENT_STRATEGY"
+            echo "Available strategies: reuse-temp, create-temp"
+            exit 1
           fi
+          
+          echo "✅ CloudFormation deployment completed successfully"
 
           # Get stack outputs
           echo "Getting stack outputs..."
