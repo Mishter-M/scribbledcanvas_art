@@ -85,20 +85,11 @@ jobs:
         run: |
           echo "=== Checking for Persistent CloudFront Distribution ==="
           
-          # Try to get the CloudFront distribution from current stack (if not cleaned up)
-          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "false" ]; then
-            EXISTING_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
-              --stack-name $STACK_NAME \
-              --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
-              --output text \
-              --region $AWS_REGION 2>/dev/null || echo "")
-          else
-            echo "Stack was cleaned up, checking for orphaned CloudFront distributions..."
-            # Look for any existing CloudFront distributions that might be orphaned
-            EXISTING_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
-              --query 'DistributionList.Items[?Comment==`ARTFORGE Portfolio - Static Website`].Id' \
-              --output text 2>/dev/null || echo "")
-          fi
+          # Look for existing CloudFront distributions that might be reusable
+          echo "Checking for existing CloudFront distributions..."
+          EXISTING_DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query 'DistributionList.Items[?Comment==`ARTFORGE Portfolio - Static Website`].Id' \
+            --output text 2>/dev/null || echo "")
           
           if [ -n "$EXISTING_DISTRIBUTION_ID" ] && [ "$EXISTING_DISTRIBUTION_ID" != "None" ]; then
             echo "Found existing CloudFront distribution: $EXISTING_DISTRIBUTION_ID"
@@ -201,7 +192,6 @@ jobs:
 
       - name: Deploy to AWS
         id: deployment-result
-        continue-on-error: true
         run: |
           echo "=== Starting AWS Deployment ==="
           set -e  # Exit on any error
@@ -359,10 +349,13 @@ jobs:
         run: |
           echo "=== Final Stack Cleanup ==="
           
-          # If we used an existing temp stack, consider renaming it back to main
-          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "existing-temp" ]; then
+          # Report successful deployment
+          if [ "${{ steps.deployment-strategy.outputs.strategy }}" == "reuse-temp" ]; then
             echo "✅ Successfully updated existing temporary stack: $STACK_NAME"
             echo "📝 Note: Stack name is temporary but fully functional"
+          else
+            echo "✅ Successfully created new temporary stack: $STACK_NAME"
+            echo "📝 Note: New deployment with unique stack name"
           fi
           
           # Clean up any old failed stacks (but preserve CloudFront resources)
@@ -410,7 +403,7 @@ jobs:
         run: |
           echo "=== Post-Deployment Information ==="
           
-          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "temp-stack" ]; then
+          if [[ "$STACK_NAME" == *"-temp-"* ]]; then
             echo "⚠️  TEMPORARY STACK USED"
             echo "📝 A temporary stack was created due to deletion issues with the original stack"
             echo "🧹 Manual cleanup needed:"
@@ -420,7 +413,7 @@ jobs:
             echo ""
             echo "🔄 For next deployment:"
             echo "   - The temporary stack will be used until manual cleanup is complete"
-            echo "   - Your CloudFront URL remains the same: https://d3lq2w22ij8clc.cloudfront.net"
+            echo "   - Your CloudFront URL remains the same"
           fi
           
           echo ""
