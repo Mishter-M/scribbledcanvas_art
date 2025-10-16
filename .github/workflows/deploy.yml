@@ -74,6 +74,35 @@ jobs:
           }
           EOF
 
+      - name: Pre-Deployment Validation
+        run: |
+          echo "🔍 Validating CloudFormation template..."
+          
+          # Validate template syntax
+          VALIDATION_OUTPUT=$(mktemp)
+          if ! aws cloudformation validate-template --template-body file://aws/cloudformation-template.yaml > $VALIDATION_OUTPUT 2>&1; then
+            echo "❌ CloudFormation template validation failed:"
+            cat $VALIDATION_OUTPUT
+            exit 1
+          fi
+          
+          # Check required files exist
+          if [ ! -f "aws/cloudformation-template.yaml" ]; then
+            echo "❌ CloudFormation template not found"
+            exit 1
+          fi
+          
+          if [ ! -f "stack-policy.json" ]; then
+            echo "❌ Stack policy file not found"
+            exit 1
+          fi
+          
+          # Check template capabilities
+          echo "📋 Template validation results:"
+          cat $VALIDATION_OUTPUT
+          
+          echo "✅ Pre-deployment validation passed"
+
       - name: Deploy with Rollback Protection
         id: deployment
         run: |
@@ -101,7 +130,10 @@ jobs:
           
           echo "� Creating new stack: $NEW_STACK_NAME"
           
-          # Deploy new stack with stack policy
+          # Deploy new stack with enhanced error handling
+          echo "📦 Starting CloudFormation deployment..."
+          DEPLOY_OUTPUT=$(mktemp)
+          
           if aws cloudformation deploy \
             --template-file aws/cloudformation-template.yaml \
             --stack-name $NEW_STACK_NAME \
@@ -110,7 +142,7 @@ jobs:
                 Environment=prod \
             --capabilities CAPABILITY_NAMED_IAM \
             --region $AWS_REGION \
-            --no-fail-on-empty-changeset; then
+            --no-fail-on-empty-changeset 2>&1 | tee $DEPLOY_OUTPUT; then
             
             # Set stack policy to protect critical resources
             aws cloudformation set-stack-policy \
@@ -168,6 +200,17 @@ jobs:
             fi
           else
             echo "❌ CloudFormation deployment failed"
+            echo "📋 Deployment output:"
+            cat $DEPLOY_OUTPUT || echo "No deployment output available"
+            
+            # Get stack events for detailed error information
+            echo "📋 Stack events (last 10):"
+            aws cloudformation describe-stack-events \
+              --stack-name $NEW_STACK_NAME \
+              --query 'StackEvents[:10].{Time:Timestamp,Status:ResourceStatus,Reason:ResourceStatusReason,Resource:LogicalResourceId}' \
+              --output table \
+              --region $AWS_REGION || echo "Could not retrieve stack events"
+            
             exit 1
           fi
 
