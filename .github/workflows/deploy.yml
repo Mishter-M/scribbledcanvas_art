@@ -44,6 +44,9 @@ jobs:
       - name: Fix admin page routing
         run: ./scripts/fix-admin-routing.sh
 
+      - name: Inject API endpoint
+        run: ./scripts/inject-api-endpoint.sh
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -59,7 +62,7 @@ jobs:
           # First, check if there's already a working temporary stack we can use
           EXISTING_TEMP_STACK=$(aws cloudformation list-stacks \
             --region $AWS_REGION \
-            --query "StackSummaries[?contains(StackName, '${STACK_NAME}-temp') && StackStatus == 'CREATE_COMPLETE'].StackName" \
+            --query "StackSummaries[?contains(StackName, '${STACK_NAME}-temp') && (StackStatus == 'CREATE_COMPLETE' || StackStatus == 'UPDATE_COMPLETE')].StackName" \
             --output text 2>/dev/null | head -1)
           
           if [ -n "$EXISTING_TEMP_STACK" ] && [ "$EXISTING_TEMP_STACK" != "None" ]; then
@@ -264,55 +267,82 @@ jobs:
           set -e  # Exit on any error
           
           # Show deployment context
-          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "true" ]; then
-            echo "🔄 Deploying fresh stack after cleanup"
-          else
-            echo "🔄 Updating existing stack"
-          fi
-          
-          if [ "${{ steps.cloudfront-check.outputs.has-existing }}" == "true" ]; then
-            echo "🌐 Persistent CloudFront Distribution: ${{ steps.cloudfront-check.outputs.distribution-id }}"
-          fi
-          
-          # Deploy CloudFormation stack
-          echo "Deploying CloudFormation stack..."
-          
-          # Try deploying to the main stack name first
-          if ! aws cloudformation deploy \
-            --template-file aws/cloudformation-template.yaml \
-            --stack-name $STACK_NAME \
-            --parameter-overrides \
-                ProjectName=artforge-portfolio \
-                Environment=prod \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region $AWS_REGION \
-            --no-fail-on-empty-changeset; then
+          if [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "existing-temp" ]; then
+            echo "🔄 Using existing temporary stack: $STACK_NAME"
+            echo "⚡ Skipping CloudFormation deployment - stack already exists and works"
             
-            echo "⚠️ Main stack deployment failed, checking if we need a fallback approach..."
-            
-            # Check if the stack is still in a failed state
-            CURRENT_STATUS=$(aws cloudformation describe-stacks \
+            # Verify the stack is working
+            STACK_STATUS=$(aws cloudformation describe-stacks \
               --stack-name $STACK_NAME \
               --query 'Stacks[0].StackStatus' \
               --output text \
-              --region $AWS_REGION 2>/dev/null || echo "STACK_NOT_FOUND")
+              --region $AWS_REGION)
             
-            if [[ "$CURRENT_STATUS" != "STACK_NOT_FOUND" ]]; then
-              echo "⚠️ Stack still exists in state: $CURRENT_STATUS"
-              echo "🔄 This is expected - the deployment will retry on the next push"
-              echo "💡 The CloudFront distribution is preserved, so your URL remains the same"
+            if [[ "$STACK_STATUS" != "UPDATE_COMPLETE" && "$STACK_STATUS" != "CREATE_COMPLETE" ]]; then
+              echo "❌ Existing stack is not in a healthy state: $STACK_STATUS"
               exit 1
-            else
-              echo "🔄 Retrying deployment to fresh stack..."
-              aws cloudformation deploy \
-                --template-file aws/cloudformation-template.yaml \
+            fi
+            
+            echo "✅ Existing stack is healthy: $STACK_STATUS"
+            
+          elif [ "${{ steps.stack-cleanup.outputs.stack-cleaned }}" == "temp-stack" ]; then
+            echo "🔄 Deploying to new temporary stack after cleanup"
+            
+            # Deploy CloudFormation stack
+            echo "Deploying CloudFormation stack..."
+            aws cloudformation deploy \
+              --template-file aws/cloudformation-template.yaml \
+              --stack-name $STACK_NAME \
+              --parameter-overrides \
+                  ProjectName=artforge-portfolio \
+                  Environment=prod \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region $AWS_REGION \
+              --no-fail-on-empty-changeset
+              
+          else
+            echo "🔄 Updating existing main stack"
+            
+            # Deploy CloudFormation stack  
+            echo "Deploying CloudFormation stack..."
+            
+            # Try deploying to the main stack name first
+            if ! aws cloudformation deploy \
+              --template-file aws/cloudformation-template.yaml \
+              --stack-name $STACK_NAME \
+              --parameter-overrides \
+                  ProjectName=artforge-portfolio \
+                  Environment=prod \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region $AWS_REGION \
+              --no-fail-on-empty-changeset; then
+              
+              echo "⚠️ Main stack deployment failed, checking if we need a fallback approach..."
+              
+              # Check if the stack is still in a failed state
+              CURRENT_STATUS=$(aws cloudformation describe-stacks \
                 --stack-name $STACK_NAME \
-                --parameter-overrides \
-                    ProjectName=artforge-portfolio \
-                    Environment=prod \
-                --capabilities CAPABILITY_NAMED_IAM \
-                --region $AWS_REGION \
-                --no-fail-on-empty-changeset
+                --query 'Stacks[0].StackStatus' \
+                --output text \
+                --region $AWS_REGION 2>/dev/null || echo "STACK_NOT_FOUND")
+              
+              if [[ "$CURRENT_STATUS" != "STACK_NOT_FOUND" ]]; then
+                echo "⚠️ Stack still exists in state: $CURRENT_STATUS"
+                echo "🔄 This is expected - the deployment will retry on the next push"
+                echo "💡 The CloudFront distribution is preserved, so your URL remains the same"
+                exit 1
+              else
+                echo "🔄 Retrying deployment to fresh stack..."
+                aws cloudformation deploy \
+                  --template-file aws/cloudformation-template.yaml \
+                  --stack-name $STACK_NAME \
+                  --parameter-overrides \
+                      ProjectName=artforge-portfolio \
+                      Environment=prod \
+                  --capabilities CAPABILITY_NAMED_IAM \
+                  --region $AWS_REGION \
+                  --no-fail-on-empty-changeset
+              fi
             fi
           fi
 
@@ -332,7 +362,21 @@ jobs:
 
           # Upload website files to S3
           echo "Uploading website files to S3..."
+          echo "📁 Source directory contents:"
+          ls -la out/ | head -10
+          echo "🪣 Target bucket: $WEBSITE_BUCKET"
+          
+          # Upload with detailed output
           aws s3 sync out/ s3://$WEBSITE_BUCKET --delete --region $AWS_REGION
+          
+          # Verify upload worked
+          UPLOAD_COUNT=$(aws s3 ls s3://$WEBSITE_BUCKET --recursive | wc -l)
+          echo "✅ Uploaded files count: $UPLOAD_COUNT"
+          
+          if [ "$UPLOAD_COUNT" -eq 0 ]; then
+            echo "❌ No files were uploaded to S3!"
+            exit 1
+          fi
 
           # Invalidate CloudFront cache
           echo "Invalidating CloudFront cache..."
