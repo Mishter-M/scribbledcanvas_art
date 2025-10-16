@@ -19,6 +19,32 @@ Parameters:
     Description: 'Custom domain name (optional)'
 
 Resources:
+  # CloudFront Function for URL rewriting
+  URLRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-url-rewrite'
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          
+          // If the URI ends with '/' and it's not the root, append 'index.html'
+          if (uri.endsWith('/') && uri !== '/') {
+            request.uri = uri + 'index.html';
+          }
+          // If the URI is for a directory without trailing slash, add index.html
+          else if (!uri.includes('.') && !uri.endsWith('/')) {
+            request.uri = uri + '/index.html';
+          }
+          
+          return request;
+        }
+      FunctionConfig:
+        Comment: !Sub 'URL rewriting function for ${ProjectName}-${Environment}'
+        Runtime: cloudfront-js-1.0
+
   # S3 Bucket for website hosting
   WebsiteBucket:
     Type: AWS::S3::Bucket
@@ -110,6 +136,9 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingOptimized
           OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf # CORS-S3Origin
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt URLRewriteFunction.FunctionARN
         DefaultRootObject: index.html
         # Configure error responses to handle missing files properly
         CustomErrorResponses:
