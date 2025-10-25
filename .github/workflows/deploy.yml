@@ -16,7 +16,8 @@ jobs:
     
     outputs:
       deployment-status: ${{ steps.deployment.outcome }}
-      new-stack-name: ${{ steps.deployment.outputs.new-stack-name }}
+      target-stack-name: ${{ steps.deployment.outputs.target-stack-name }}
+      operation-type: ${{ steps.deployment.outputs.operation-type }}
       previous-stack-name: ${{ steps.deployment.outputs.previous-stack-name }}
 
     steps:
@@ -108,35 +109,85 @@ jobs:
         run: |
           echo "=== Robust Deployment with Rollback ==="
           
-          # Find current active stack
+          # Find current active stack (including temp stacks)
           CURRENT_STACK=$(aws cloudformation list-stacks \
             --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
-            --query "StackSummaries[?contains(StackName, '${STACK_NAME}')].{Name:StackName,Created:CreationTime}" \
+            --query "StackSummaries[?contains(StackName, 'artforge-portfolio-prod')].{Name:StackName,Created:CreationTime}" \
             --output text \
             --region $AWS_REGION 2>/dev/null | sort -k2 -r | head -1 | awk '{print $1}' || echo "")
           
           if [ ! -z "$CURRENT_STACK" ]; then
-            echo "📋 Current active stack: $CURRENT_STACK"
+            # Verify stack is in a good state for updates
+            STACK_STATUS=$(aws cloudformation describe-stacks \
+              --stack-name $CURRENT_STACK \
+              --query 'Stacks[0].StackStatus' \
+              --output text \
+              --region $AWS_REGION 2>/dev/null || echo "UNKNOWN")
+            
+            echo "📋 Current active stack: $CURRENT_STACK (Status: $STACK_STATUS)"
+            
+            if [ "$STACK_STATUS" = "UPDATE_ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+              echo "⚠️ Stack is in rollback state - will create new stack instead"
+              CURRENT_STACK=""
+            fi
+            
             echo "previous-stack-name=$CURRENT_STACK" >> $GITHUB_OUTPUT
           else
             echo "⚠️ No current active stack found"
             echo "previous-stack-name=" >> $GITHUB_OUTPUT
           fi
           
-          # Generate new stack name
-          TIMESTAMP=$(date +%s)
-          NEW_STACK_NAME="${STACK_NAME}-${TIMESTAMP}"
-          echo "new-stack-name=$NEW_STACK_NAME" >> $GITHUB_OUTPUT
+          if [ ! -z "$CURRENT_STACK" ]; then
+            # Update existing stack
+            TARGET_STACK=$CURRENT_STACK
+            echo "🔄 Updating existing stack: $TARGET_STACK"
+            OPERATION_TYPE="UPDATE"
+          else
+            # Create new stack if none exists
+            TIMESTAMP=$(date +%s)
+            TARGET_STACK="${STACK_NAME}-${TIMESTAMP}"
+            echo "🆕 Creating new stack: $TARGET_STACK"
+            OPERATION_TYPE="CREATE"
+          fi
           
-          echo "� Creating new stack: $NEW_STACK_NAME"
+          echo "target-stack-name=$TARGET_STACK" >> $GITHUB_OUTPUT
+          echo "operation-type=$OPERATION_TYPE" >> $GITHUB_OUTPUT
           
-          # Deploy new stack with enhanced error handling
-          echo "📦 Starting CloudFormation deployment..."
+          # Deploy with enhanced error handling
+          echo "📦 Starting CloudFormation deployment ($OPERATION_TYPE)..."
           DEPLOY_OUTPUT=$(mktemp)
+          
+          # For updates, preview changes first
+          if [ "$OPERATION_TYPE" = "UPDATE" ]; then
+            echo "🔍 Previewing changes with change set..."
+            CHANGESET_NAME="preview-$(date +%s)"
+            
+            aws cloudformation create-change-set \
+              --stack-name $TARGET_STACK \
+              --template-body file://aws/cloudformation-template.yaml \
+              --change-set-name $CHANGESET_NAME \
+              --parameters ParameterKey=ProjectName,ParameterValue=artforge-portfolio ParameterKey=Environment,ParameterValue=prod \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region $AWS_REGION >/dev/null 2>&1 || echo "Change set creation failed - proceeding with deployment"
+            
+            # Show change summary if change set was created
+            aws cloudformation describe-change-set \
+              --stack-name $TARGET_STACK \
+              --change-set-name $CHANGESET_NAME \
+              --query 'Changes[].{Action:Action,Resource:ResourceChange.LogicalResourceId,Type:ResourceChange.ResourceType,Replacement:ResourceChange.Replacement}' \
+              --output table \
+              --region $AWS_REGION 2>/dev/null || echo "No changes to preview"
+            
+            # Delete the change set
+            aws cloudformation delete-change-set \
+              --stack-name $TARGET_STACK \
+              --change-set-name $CHANGESET_NAME \
+              --region $AWS_REGION >/dev/null 2>&1 || true
+          fi
           
           if aws cloudformation deploy \
             --template-file aws/cloudformation-template.yaml \
-            --stack-name $NEW_STACK_NAME \
+            --stack-name $TARGET_STACK \
             --parameter-overrides \
                 ProjectName=artforge-portfolio \
                 Environment=prod \
@@ -146,7 +197,7 @@ jobs:
             
             # Set stack policy to protect critical resources
             aws cloudformation set-stack-policy \
-              --stack-name $NEW_STACK_NAME \
+              --stack-name $TARGET_STACK \
               --stack-policy-body file://stack-policy.json \
               --region $AWS_REGION
             
@@ -154,19 +205,19 @@ jobs:
             
             # Get stack outputs
             WEBSITE_BUCKET=$(aws cloudformation describe-stacks \
-              --stack-name $NEW_STACK_NAME \
+              --stack-name $TARGET_STACK \
               --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucketName`].OutputValue' \
               --output text \
               --region $AWS_REGION)
 
             CLOUDFRONT_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
-              --stack-name $NEW_STACK_NAME \
+              --stack-name $TARGET_STACK \
               --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
               --output text \
               --region $AWS_REGION)
 
             WEBSITE_URL=$(aws cloudformation describe-stacks \
-              --stack-name $NEW_STACK_NAME \
+              --stack-name $TARGET_STACK \
               --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
               --output text \
               --region $AWS_REGION)
@@ -188,7 +239,7 @@ jobs:
 
                 echo "🎉 Deployment completed successfully!"
                 echo "🌐 Website URL: $WEBSITE_URL"
-                echo "📋 New Stack: $NEW_STACK_NAME"
+                echo "📋 Stack: $TARGET_STACK ($OPERATION_TYPE)"
                 exit 0
               else
                 echo "❌ File upload verification failed"
@@ -206,7 +257,7 @@ jobs:
             # Get stack events for detailed error information
             echo "📋 Stack events (last 10):"
             aws cloudformation describe-stack-events \
-              --stack-name $NEW_STACK_NAME \
+              --stack-name $TARGET_STACK \
               --query 'StackEvents[:10].{Time:Timestamp,Status:ResourceStatus,Reason:ResourceStatusReason,Resource:LogicalResourceId}' \
               --output table \
               --region $AWS_REGION || echo "Could not retrieve stack events"
@@ -219,21 +270,27 @@ jobs:
         run: |
           echo "=== Cleanup and Rollback Process ==="
           
-          NEW_STACK_NAME="${{ steps.deployment.outputs.new-stack-name }}"
+          TARGET_STACK_NAME="${{ steps.deployment.outputs.target-stack-name }}"
+          OPERATION_TYPE="${{ steps.deployment.outputs.operation-type }}"
           PREVIOUS_STACK_NAME="${{ steps.deployment.outputs.previous-stack-name }}"
           
-          if [ ! -z "$NEW_STACK_NAME" ]; then
-            echo "🧹 Cleaning up failed deployment stack: $NEW_STACK_NAME"
+          echo "🚨 Deployment failed - Operation: $OPERATION_TYPE, Stack: $TARGET_STACK_NAME"
+          
+          if [ "$OPERATION_TYPE" = "CREATE" ] && [ ! -z "$TARGET_STACK_NAME" ]; then
+            echo "🧹 Cleaning up failed new stack: $TARGET_STACK_NAME"
             
-            # Check if new stack exists and delete it
-            if aws cloudformation describe-stacks --stack-name $NEW_STACK_NAME --region $AWS_REGION >/dev/null 2>&1; then
+            # Check if stack exists and delete it
+            if aws cloudformation describe-stacks --stack-name $TARGET_STACK_NAME --region $AWS_REGION >/dev/null 2>&1; then
               echo "Deleting failed stack..."
-              aws cloudformation delete-stack --stack-name $NEW_STACK_NAME --region $AWS_REGION
+              aws cloudformation delete-stack --stack-name $TARGET_STACK_NAME --region $AWS_REGION
               
               echo "Waiting for stack deletion..."
-              aws cloudformation wait stack-delete-complete --stack-name $NEW_STACK_NAME --region $AWS_REGION || true
+              aws cloudformation wait stack-delete-complete --stack-name $TARGET_STACK_NAME --region $AWS_REGION || true
               echo "✅ Failed stack cleaned up"
             fi
+          elif [ "$OPERATION_TYPE" = "UPDATE" ]; then
+            echo "⚠️ Stack update failed - stack may be in UPDATE_ROLLBACK_COMPLETE state"
+            echo "Stack $TARGET_STACK_NAME should automatically rollback to previous state"
           fi
           
           if [ ! -z "$PREVIOUS_STACK_NAME" ]; then
@@ -265,7 +322,7 @@ jobs:
             echo "🧹 Cleaning up old deployment stacks..."
             aws cloudformation list-stacks \
               --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE \
-              --query "StackSummaries[?contains(StackName, '${STACK_NAME}') && StackName != '${{ steps.deployment.outputs.new-stack-name }}'].StackName" \
+              --query "StackSummaries[?contains(StackName, '${STACK_NAME}') && StackName != '${{ steps.deployment.outputs.target-stack-name }}'].StackName" \
               --output text \
               --region $AWS_REGION | tr '\t' '\n' | head -n -1 | while read -r OLD_STACK; do
               if [ ! -z "$OLD_STACK" ]; then
