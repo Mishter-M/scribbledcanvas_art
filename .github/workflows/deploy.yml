@@ -157,32 +157,37 @@ jobs:
           echo "📦 Starting CloudFormation deployment ($OPERATION_TYPE)..."
           DEPLOY_OUTPUT=$(mktemp)
           
-          # For updates, preview changes first
+          # For updates, attempt to preview changes (non-blocking)
           if [ "$OPERATION_TYPE" = "UPDATE" ]; then
-            echo "🔍 Previewing changes with change set..."
-            CHANGESET_NAME="preview-$(date +%s)"
-            
-            aws cloudformation create-change-set \
-              --stack-name $TARGET_STACK \
-              --template-body file://aws/cloudformation-template.yaml \
-              --change-set-name $CHANGESET_NAME \
-              --parameters ParameterKey=ProjectName,ParameterValue=artforge-portfolio ParameterKey=Environment,ParameterValue=prod \
-              --capabilities CAPABILITY_NAMED_IAM \
-              --region $AWS_REGION >/dev/null 2>&1 || echo "Change set creation failed - proceeding with deployment"
-            
-            # Show change summary if change set was created
-            aws cloudformation describe-change-set \
-              --stack-name $TARGET_STACK \
-              --change-set-name $CHANGESET_NAME \
-              --query 'Changes[].{Action:Action,Resource:ResourceChange.LogicalResourceId,Type:ResourceChange.ResourceType,Replacement:ResourceChange.Replacement}' \
-              --output table \
-              --region $AWS_REGION 2>/dev/null || echo "No changes to preview"
-            
-            # Delete the change set
-            aws cloudformation delete-change-set \
-              --stack-name $TARGET_STACK \
-              --change-set-name $CHANGESET_NAME \
-              --region $AWS_REGION >/dev/null 2>&1 || true
+            echo "🔍 Attempting to preview changes..."
+            (
+              CHANGESET_NAME="preview-$(date +%s)"
+              
+              if aws cloudformation create-change-set \
+                --stack-name $TARGET_STACK \
+                --template-body file://aws/cloudformation-template.yaml \
+                --change-set-name $CHANGESET_NAME \
+                --parameters "ParameterKey=ProjectName,ParameterValue=artforge-portfolio" "ParameterKey=Environment,ParameterValue=prod" \
+                --capabilities CAPABILITY_NAMED_IAM \
+                --region $AWS_REGION 2>/dev/null; then
+                
+                echo "📋 Change preview:"
+                aws cloudformation describe-change-set \
+                  --stack-name $TARGET_STACK \
+                  --change-set-name $CHANGESET_NAME \
+                  --query 'Changes[].{Action:Action,Resource:ResourceChange.LogicalResourceId,Type:ResourceChange.ResourceType}' \
+                  --output table \
+                  --region $AWS_REGION 2>/dev/null || echo "No detailed changes available"
+                
+                # Cleanup
+                aws cloudformation delete-change-set \
+                  --stack-name $TARGET_STACK \
+                  --change-set-name $CHANGESET_NAME \
+                  --region $AWS_REGION >/dev/null 2>&1 || true
+              else
+                echo "⚠️ Change preview unavailable - proceeding with deployment"
+              fi
+            ) || echo "⚠️ Change set preview failed - continuing with deployment"
           fi
           
           if aws cloudformation deploy \
